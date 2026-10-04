@@ -178,6 +178,61 @@ function App() {
     selectedUserRef.current = selectedUser
   }, [selectedUser])
 
+
+  // Reconcile the open conversation after reconnects, tab switches, or missed
+  // Socket.IO events. Socket.IO remains the primary real-time delivery path;
+  // this is a lightweight reliability fallback so messages cannot silently
+  // disappear when a mobile browser suspends a connection.
+  useEffect(() => {
+    if (!socketConnected || !selectedUser || !user) return
+
+    let cancelled = false
+
+    async function syncConversation() {
+      try {
+        const response = await fetch(
+          API_URL + '/api/messages/' + user.id + '/' + selectedUser.id,
+          { headers: { Authorization: 'Bearer ' + token } }
+        )
+
+        if (!response.ok) return
+
+        const data = await response.json()
+        if (cancelled) return
+
+        setMessages((current) => {
+          const byId = new Map(current.map((item) => [item.id, item]))
+
+          for (const item of data.messages || []) {
+            byId.set(item.id, item)
+          }
+
+          return [...byId.values()].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          )
+        })
+      } catch {}
+    }
+
+    syncConversation()
+
+    const interval = window.setInterval(syncConversation, 5000)
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncConversation()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [socketConnected, selectedUser?.id, user?.id, token])
+
   useEffect(() => {
     if (!selectedUser || !user) {
       setMessages([])
