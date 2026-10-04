@@ -411,6 +411,7 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
 
 io.on('connection', async (socket) => {
   const userId = socket.data.userId
+  socket.join(userId)
 
   let connections = onlineConnections.get(userId)
   if (!connections) {
@@ -460,15 +461,8 @@ io.on('connection', async (socket) => {
 
       await messagesCollection.insertOne(message)
 
-      const senderConnections = onlineConnections.get(userId)
-      senderConnections?.forEach((socketId) => {
-        io.to(socketId).emit('private:message', message)
-      })
-
-      const receiverConnections = onlineConnections.get(receiverId)
-      receiverConnections?.forEach((socketId) => {
-        io.to(socketId).emit('private:message', message)
-      })
+      io.to(userId).emit('private:message', message)
+      io.to(receiverId).emit('private:message', message)
 
       done({ ok: true, message })
     } catch (error) {
