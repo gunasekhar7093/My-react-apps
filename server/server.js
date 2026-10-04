@@ -119,6 +119,26 @@ async function writeUsers(users) {
   await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2) + '\n', 'utf8')
 }
 
+async function migratePlaintextPasswords() {
+  const users = await readUsers()
+  let changed = false
+
+  for (const user of users) {
+    if (typeof user.password === 'string' && user.password) {
+      const passwordData = hashPassword(user.password)
+      user.passwordHash = passwordData.hash
+      user.passwordSalt = passwordData.salt
+      delete user.password
+      changed = true
+    }
+  }
+
+  if (changed) {
+    await writeUsers(users)
+    console.log('Migrated plaintext passwords to secure password hashes.')
+  }
+}
+
 async function readMessages() {
   try {
     const data = await fs.readFile(MESSAGES_FILE, 'utf8')
@@ -464,6 +484,13 @@ io.on('connection', async (socket) => {
   })
 })
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`Chat backend running on port ${PORT}`)
-})
+migratePlaintextPasswords()
+  .then(() => {
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`Chat backend running on port ${PORT}`)
+    })
+  })
+  .catch((error) => {
+    console.error('Could not initialize user security:', error)
+    process.exit(1)
+  })
