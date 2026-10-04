@@ -242,9 +242,14 @@ function App() {
             byId.set(item.id, item)
           }
 
-          return [...byId.values()].sort(
+          const next = [...byId.values()].sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           )
+          setConversationCache((cache) => ({
+            ...cache,
+            [selectedUser.id]: next,
+          }))
+          return next
         })
       } catch {}
     }
@@ -423,6 +428,7 @@ function App() {
     setUsers([])
     setUnreadCounts({})
     setMessages([])
+    setConversationCache({})
     setText('')
     setSearch('')
     setSocketConnected(false)
