@@ -41,6 +41,7 @@ function App() {
   const [socketConnected, setSocketConnected] = useState(false)
   const [search, setSearch] = useState('')
   const [mobileUsersOpen, setMobileUsersOpen] = useState(true)
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
   const bottomRef = useRef(null)
@@ -241,7 +242,7 @@ function App() {
               <Avatar name={user.name} size="sm" online={socketConnected} />
               <span>{user.name}</span>
             </div>
-            <button className="icon-button logout-icon" onClick={logout} aria-label="Logout" title="Logout">
+            <button className="icon-button logout-icon" onClick={() => setShowLogoutDialog(true)} aria-label="Logout" title="Logout">
               <Icon name="logout" />
             </button>
           </div>
@@ -368,6 +369,40 @@ function App() {
             )}
           </section>
         </section>
+
+        {showLogoutDialog && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={() => setShowLogoutDialog(false)}>
+            <section
+              className="logout-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="logout-dialog-title"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="dialog-icon">
+                <Icon name="logout" />
+              </div>
+              <div className="dialog-content">
+                <h2 id="logout-dialog-title">Log out of ChatSpace?</h2>
+                <p>You will be disconnected from your current conversation. You can sign in again anytime.</p>
+              </div>
+              <div className="dialog-actions">
+                <button className="dialog-cancel" onClick={() => setShowLogoutDialog(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="dialog-confirm"
+                  onClick={() => {
+                    setShowLogoutDialog(false)
+                    logout()
+                  }}
+                >
+                  Log out
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </main>
     )
   }
