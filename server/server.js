@@ -299,6 +299,7 @@ app.post('/api/login', async (req, res) => {
       ? user.passwordHash && user.passwordSalt
         ? verifyPassword(password, user.passwordHash, user.passwordSalt)
         : user.password === password
+      : false
 
     if (!user || !passwordValid) {
       return res.status(401).json({ error: 'Invalid username/email or password' })
