@@ -560,9 +560,6 @@ async function startServer() {
     ])
 
     await migrateLegacyUsers()
-    await messagesCollection.updateMany(
-      { readAt: { $exists: false } },
-      { $set: { readAt: null } },
     )
 
     httpServer.listen(PORT, '0.0.0.0', () => {
