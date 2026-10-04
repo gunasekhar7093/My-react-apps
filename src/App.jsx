@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
 const API_URL = 'https://my-react-apps-aet5.onrender.com'
@@ -7,8 +7,28 @@ function App() {
   const [mode, setMode] = useState('login')
   const [form, setForm] = useState({ name: '', username: '', password: '', phone: '' })
   const [user, setUser] = useState(null)
+  const [users, setUsers] = useState([])
+  const [selectedUser, setSelectedUser] = useState(null)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    loadUsers()
+    const timer = setInterval(loadUsers, 5000)
+    return () => clearInterval(timer)
+  }, [user])
+
+  async function loadUsers() {
+    try {
+      const response = await fetch(API_URL + '/api/users')
+      if (!response.ok) return
+      const data = await response.json()
+      setUsers(data.filter((item) => item.id !== user?.id))
+    } catch {
+      // Keep the current list if the backend is temporarily unavailable.
+    }
+  }
 
   function updateField(e) {
     setForm({ ...form, [e.target.name]: e.target.value })
@@ -49,24 +69,69 @@ function App() {
       body: JSON.stringify({ userId: user.id }),
     })
     setUser(null)
+    setUsers([])
+    setSelectedUser(null)
     setMessage('')
   }
 
   if (user) {
     return (
-      <main className="app-shell">
-        <section className="dashboard-card">
-          <div className="brand">ChatSpace</div>
-          <div className="avatar">{user.name.charAt(0).toUpperCase()}</div>
-          <h1>Welcome, {user.name} 👋</h1>
-          <p className="subtitle">Your account is connected to the chat backend.</p>
-          <div className="user-info">
-            <div><span>Name</span><strong>{user.name}</strong></div>
-            <div><span>Email</span><strong>{user.username}</strong></div>
-            <div><span>Phone</span><strong>{user.phone || 'Not added'}</strong></div>
-            <div><span>Status</span><strong className="online">● Online</strong></div>
+      <main className="chat-app">
+        <header className="chat-header">
+          <div>
+            <div className="brand">ChatSpace</div>
+            <div className="logged-in-as">Logged in as <strong>{user.name}</strong></div>
           </div>
-          <button className="secondary-button" onClick={logout}>Log out</button>
+          <button className="logout-button" onClick={logout}>Logout</button>
+        </header>
+
+        <section className="chat-layout">
+          <aside className="users-panel">
+            <div className="panel-title">
+              <h2>Users</h2>
+              <button onClick={loadUsers}>Refresh</button>
+            </div>
+
+            {users.length === 0 ? (
+              <p className="empty">No other users found.</p>
+            ) : (
+              <div className="user-list">
+                {users.map((item) => (
+                  <button
+                    key={item.id}
+                    className={selectedUser?.id === item.id ? 'user-item selected' : 'user-item'}
+                    onClick={() => setSelectedUser(item)}
+                  >
+                    <span className="small-avatar">{item.name.charAt(0).toUpperCase()}</span>
+                    <span className="user-details">
+                      <strong>{item.name}</strong>
+                      <small>{item.username}</small>
+                      <em className={item.status === 'online' ? 'status online' : 'status'}>
+                        ● {item.status}
+                      </em>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </aside>
+
+          <section className="chat-placeholder">
+            {selectedUser ? (
+              <>
+                <div className="selected-avatar">{selectedUser.name.charAt(0).toUpperCase()}</div>
+                <h2>{selectedUser.name}</h2>
+                <p>{selectedUser.username}</p>
+                <div className="coming-soon">💬 One-to-one messaging will be added next.</div>
+              </>
+            ) : (
+              <>
+                <div className="chat-icon">💬</div>
+                <h2>Select a user</h2>
+                <p>Choose someone from the list to start a conversation.</p>
+              </>
+            )}
+          </section>
         </section>
       </main>
     )
