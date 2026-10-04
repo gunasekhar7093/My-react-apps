@@ -227,9 +227,33 @@ app.get('/api/me', requireAuth, async (req, res) => {
   }
 })
 
-app.get('/api/users', requireAuth, async (_req, res) => {
+app.get('/api/users', requireAuth, async (req, res) => {
   try {
-    res.json((await readUsers()).map(publicUser))
+    const users = await readUsers()
+    const messages = await readMessages()
+    const latestMessageAt = new Map()
+
+    for (const message of messages) {
+      if (message.senderId !== req.userId && message.receiverId !== req.userId) continue
+
+      const otherUserId = message.senderId === req.userId
+        ? message.receiverId
+        : message.senderId
+
+      const current = latestMessageAt.get(otherUserId)
+      if (!current || new Date(message.createdAt) > new Date(current)) {
+        latestMessageAt.set(otherUserId, message.createdAt)
+      }
+    }
+
+    res.json(
+      users
+        .filter((user) => user.id !== req.userId)
+        .map((user) => ({
+          ...publicUser(user),
+          latestMessageAt: latestMessageAt.get(user.id) || null,
+        }))
+    )
   } catch {
     res.status(500).json({ error: 'Could not read users database' })
   }
@@ -332,8 +356,6 @@ app.post('/api/logout', requireAuth, async (req, res) => {
   try {
     const users = await readUsers()
     const user = users.find((item) => item.id === req.userId)
-
-    revokeSession(req.sessionToken)
 
     if (!user) {
       return res.json({ message: 'Logout successful' })
