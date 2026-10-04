@@ -22,6 +22,7 @@ function App() {
   const [user, setUser] = useState(null)
   const [sessionReady, setSessionReady] = useState(false)
   const [users, setUsers] = useState([])
+  const [unreadCounts, setUnreadCounts] = useState({})
   const [search, setSearch] = useState('')
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
@@ -135,6 +136,10 @@ function App() {
     socket.on('private:message', (incoming) => {
       const openUser = selectedUserRef.current
 
+      const otherUserId = incoming.senderId === user.id
+        ? incoming.receiverId
+        : incoming.senderId
+
       if (
         openUser &&
         ((incoming.senderId === user.id && incoming.receiverId === openUser.id) ||
@@ -146,9 +151,18 @@ function App() {
             : [...current, incoming]
         )
 
-        const otherUserId = incoming.senderId === user.id
-          ? incoming.receiverId
-          : incoming.senderId
+        setUsers((current) =>
+          current.map((item) =>
+            item.id === otherUserId
+              ? { ...item, latestMessageAt: incoming.createdAt }
+              : item
+          )
+        )
+      } else if (incoming.receiverId === user.id) {
+        setUnreadCounts((current) => ({
+          ...current,
+          [otherUserId]: (current[otherUserId] || 0) + 1,
+        }))
 
         setUsers((current) =>
           current.map((item) =>
@@ -325,6 +339,16 @@ function App() {
     }
   }
 
+  function openChat(userId) {
+    setUnreadCounts((current) => {
+      if (!current[userId]) return current
+      const next = { ...current }
+      delete next[userId]
+      return next
+    })
+    navigate('/chat/' + encodeURIComponent(userId))
+  }
+
   function sendMessage(e) {
     e?.preventDefault()
 
@@ -368,6 +392,7 @@ function App() {
     setToken('')
     setUser(null)
     setUsers([])
+    setUnreadCounts({})
     setMessages([])
     setText('')
     setSearch('')
@@ -437,7 +462,8 @@ function App() {
               search={search}
               setSearch={setSearch}
               onlineCount={onlineCount}
-              openUser={(id) => navigate('/chat/' + encodeURIComponent(id))}
+              openUser={openChat}
+              unreadCounts={unreadCounts}
               socketConnected={socketConnected}
               onLogout={logout}
             />
