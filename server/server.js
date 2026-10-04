@@ -129,10 +129,12 @@ async function getUserById(userId) {
   return usersCollection.findOne({ id: userId })
 }
 
-async function setUserStatus(userId, status) {
+async function setUserStatus(userId, status, lastSeenAt = null) {
+  const update = { $set: { status } }
+  if (lastSeenAt) update.$set.lastSeenAt = lastSeenAt
   const result = await usersCollection.findOneAndUpdate(
     { id: userId },
-    { $set: { status } },
+    update,
     { returnDocument: 'after' },
   )
   return userToPublic(result)
@@ -374,7 +376,9 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', requireAuth, async (req, res) => {
   try {
-    await usersCollection.updateOne({ id: req.userId }, { $set: { status: 'offline' } })
+    const lastSeenAt = new Date().toISOString()
+    await usersCollection.updateOne({ id: req.userId }, { $set: { status: 'offline', lastSeenAt } })
+    io.emit('user:status', { userId: req.userId, status: 'offline', lastSeenAt })
     res.json({ message: 'Logout successful' })
   } catch (error) {
     console.error('Could not log out:', error.message)
@@ -536,8 +540,9 @@ io.on('connection', async (socket) => {
       onlineConnections.delete(userId)
 
       try {
-        await usersCollection.updateOne({ id: userId }, { $set: { status: 'offline' } })
-        socket.broadcast.emit('user:status', { userId, status: 'offline' })
+        const lastSeenAt = new Date().toISOString()
+        await usersCollection.updateOne({ id: userId }, { $set: { status: 'offline', lastSeenAt } })
+        socket.broadcast.emit('user:status', { userId, status: 'offline', lastSeenAt })
       } catch (error) {
         console.error('Could not update offline status:', error.message)
       }
