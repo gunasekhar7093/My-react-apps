@@ -1,0 +1,14 @@
+[
+  {
+    "id": "u1",
+    "name": "Guna",
+    "username": "guna@example.com",
+    "status": "online"
+  },
+  {
+    "id": "u2",
+    "name": "Alex",
+    "username": "alex@example.com",
+    "status": "offline"
+  }
+]
