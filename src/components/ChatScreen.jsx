@@ -1,5 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 
+function formatLastSeen(lastSeenAt) {
+  if (!lastSeenAt) return 'Offline'
+
+  const date = new Date(lastSeenAt)
+  if (Number.isNaN(date.getTime())) return 'Offline'
+
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday = date.toDateString() === yesterday.toDateString()
+  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+
+  if (isToday) return 'Last seen today at ' + time
+  if (isYesterday) return 'Last seen yesterday at ' + time
+
+  return 'Last seen ' + date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' at ' + time
+}
+
 const Icon = ({ name, size = 20 }) => {
   const paths = {
     arrow: <><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></>,
@@ -103,7 +122,7 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
         </span>
         <div className="chat-user">
           <strong>{selectedUser.name}</strong>
-          <small className={selectedUser.status === 'online' ? 'status-online' : ''}>{selectedUser.status === 'online' ? 'Active now' : 'Offline'}</small>
+          <small className={selectedUser.status === 'online' ? 'status-online' : ''}>{selectedUser.status === 'online' ? 'Active now' : formatLastSeen(selectedUser.lastSeenAt)}</small>
         </div>
         <div className={socketConnected ? 'connection-status online chat-connection' : 'connection-status chat-connection'}><i />{socketConnected ? 'Connected' : 'Connecting'}</div>
       </header>
