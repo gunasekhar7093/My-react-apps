@@ -70,12 +70,17 @@ function App() {
       setUser(null)
     }
 
+  }, [sessionReady, token])
+
+  // Handle redirects separately so changing between Dashboard and Chat does
+  // not revalidate the session or recreate the Socket.IO connection.
+  useEffect(() => {
     const authRoute = location.pathname === '/login' || location.pathname === '/register'
 
     if (user && authRoute) {
       navigate('/dashboard', { replace: true })
     }
-  }, [sessionReady, token, location.pathname, navigate])
+  }, [user, location.pathname, navigate])
 
   useEffect(() => {
     if (!sessionReady) return
@@ -99,7 +104,12 @@ function App() {
         if (!response.ok) return
         const data = await response.json()
         if (active) {
-          setUsers(data.filter((item) => item.id !== user.id))
+          const nextUsers = data.filter((item) => item.id !== user.id)
+          setUsers((current) => {
+            const currentKey = JSON.stringify(current)
+            const nextKey = JSON.stringify(nextUsers)
+            return currentKey === nextKey ? current : nextUsers
+          })
           setUnreadCounts(
             Object.fromEntries(
               data
