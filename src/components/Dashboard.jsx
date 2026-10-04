@@ -1,5 +1,24 @@
 import { useEffect, useState } from 'react'
 
+function formatLastSeen(lastSeenAt) {
+  if (!lastSeenAt) return 'Offline'
+
+  const date = new Date(lastSeenAt)
+  if (Number.isNaN(date.getTime())) return 'Offline'
+
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday = date.toDateString() === yesterday.toDateString()
+  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+
+  if (isToday) return 'Last seen today at ' + time
+  if (isYesterday) return 'Last seen yesterday at ' + time
+
+  return 'Last seen ' + date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' at ' + time
+}
+
 const Icon = ({ name, size = 20 }) => {
   const paths = {
     search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
@@ -90,7 +109,7 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
               </span>
               <span className="user-card-info">
                 <strong>{item.name}</strong>
-                <small>{item.status === 'online' ? 'Available now' : 'Offline'}</small>
+                <small>{item.status === 'online' ? 'Available now' : formatLastSeen(item.lastSeenAt)}</small>
               </span>
               <span className="user-card-actions">
                 {unreadCounts[item.id] > 0 && <span className="unread-badge">{unreadCounts[item.id] > 99 ? '99+' : unreadCounts[item.id]}</span>}
