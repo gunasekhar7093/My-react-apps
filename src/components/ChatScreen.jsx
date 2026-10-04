@@ -1,43 +1,19 @@
-export default function ChatScreen({ user, selectedUser, messages, text, setText, notice, chatLoading, socketConnected, loadingOlder, handleMessagesScroll, sendMessage, inputRef, bottomRef, goBack, Avatar, Icon }) {
-  if (!selectedUser) {
-    return <main className="chat-screen"><div className="chat-loading">Loading conversation…</div></main>
-  }
+export default function ChatScreen({ user, selectedUser, messages, text, setText, notice, chatLoading, socketConnected, sendMessage, onBack }) {
+  if (!selectedUser) return <main className="app-screen"><header className="app-header"><button className="back-button" onClick={onBack}>←</button><strong>ChatSpace</strong></header><div className="empty-chat"><strong>User not found</strong><button className="primary-button small" onClick={onBack}>Back to people</button></div></main>
 
   return (
-    <main className="chat-screen">
+    <main className="app-screen chat-screen">
       <header className="chat-header">
-        <button className="back-button" onClick={goBack} aria-label="Back to dashboard"><Icon name="back" /></button>
-        <Avatar name={selectedUser.name} size="lg" online={selectedUser.status === 'online'} />
-        <div className="chat-person"><strong>{selectedUser.name}</strong><span>{selectedUser.status === 'online' ? 'Active now' : 'Offline'}</span></div>
+        <button className="back-button" onClick={onBack} aria-label="Back to dashboard">←</button>
+        <span className="large-avatar">{selectedUser.name?.charAt(0).toUpperCase()}</span>
+        <div className="chat-user"><strong>{selectedUser.name}</strong><small className={selectedUser.status === 'online' ? 'status-online' : ''}>{selectedUser.status === 'online' ? 'Active now' : 'Offline'}</small></div>
+        <div className={socketConnected ? 'connection-status online chat-connection' : 'connection-status chat-connection'}><i />{socketConnected ? 'Connected' : 'Connecting'}</div>
       </header>
-
-      <div className="chat-body" onScroll={handleMessagesScroll}>
-        {loadingOlder && <div className="older-loader"><span className="spinner" /> Loading older messages…</div>}
-        {chatLoading ? <div className="chat-state"><span className="spinner" /> Loading conversation…</div> : messages.length === 0 ? (
-          <div className="welcome-chat">
-            <Avatar name={selectedUser.name} size="xl" online={selectedUser.status === 'online'} />
-            <span className="eyebrow">PRIVATE CONVERSATION</span>
-            <h2>Say hello to {selectedUser.name.split(' ')[0]}</h2>
-            <p>Messages you send here are visible only to you and {selectedUser.name}.</p>
-          </div>
-        ) : (
-          <div className="message-list">
-            {messages.map((item) => (
-              <div key={item.id} className={item.senderId === user.id ? 'message-row mine' : 'message-row'}>
-                <div className="message-bubble"><span>{item.text}</span><small>{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div>
-              </div>
-            ))}
-            <div ref={bottomRef} />
-          </div>
-        )}
-      </div>
-
-      {notice && <div className="chat-notice">{notice}</div>}
-
-      <form className="chat-composer" onSubmit={sendMessage}>
-        <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} placeholder={socketConnected ? 'Write a message…' : 'Connecting to ChatSpace…'} maxLength={2000} disabled={!socketConnected} />
-        <button className="send-button" type="submit" disabled={!socketConnected || !text.trim()} aria-label="Send message"><Icon name="send" /></button>
-      </form>
+      <section className="chat-body">
+        {notice && <div className="chat-notice">{notice}</div>}
+        {chatLoading ? <div className="empty-chat">Loading conversation…</div> : messages.length === 0 ? <div className="empty-chat"><span className="large-avatar">{selectedUser.name?.charAt(0).toUpperCase()}</span><strong>Start a conversation with {selectedUser.name}</strong><span>Send the first message below.</span></div> : <div className="messages">{messages.map((item) => <div key={item.id} className={item.senderId === user.id ? 'message-line mine' : 'message-line'}><div className="message"><span>{item.text}</span><small>{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div></div>)}</div>}
+      </section>
+      <form className="message-box" onSubmit={sendMessage}><input value={text} onChange={(e) => setText(e.target.value)} placeholder={socketConnected ? 'Write a message…' : 'Connecting…'} disabled={!socketConnected} autoFocus /><button type="submit" disabled={!socketConnected || !text.trim()}>Send</button></form>
     </main>
   )
 }
