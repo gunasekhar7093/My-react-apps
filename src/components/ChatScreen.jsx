@@ -49,17 +49,38 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
   useEffect(() => {
     knownMessageIdsRef.current = new Set()
     initializedMessagesRef.current = false
+    previousMessageCountRef.current = 0
+    initialScrollRef.current = true
     setAnimatedMessageIds(new Set())
   }, [selectedUser?.id])
+
+  const previousMessageCountRef = useRef(0)
+  const initialScrollRef = useRef(true)
 
   useEffect(() => {
     if (!chatBodyRef.current || chatLoading) return
 
+    const container = chatBodyRef.current
+    const messageCountChanged = messages.length !== previousMessageCountRef.current
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    const isNearBottom = distanceFromBottom < 120
+
     requestAnimationFrame(() => {
-      const container = chatBodyRef.current
-      if (container) {
+      if (!container) return
+
+      if (initialScrollRef.current || !messageCountChanged) {
         container.scrollTop = container.scrollHeight
+      } else if (isNearBottom) {
+        // Smoothly move the existing messages upward as the new message
+        // enters, matching the natural WhatsApp-style chat movement.
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth',
+        })
       }
+
+      previousMessageCountRef.current = messages.length
+      initialScrollRef.current = false
     })
   }, [messages, chatLoading, selectedUser?.id])
 
