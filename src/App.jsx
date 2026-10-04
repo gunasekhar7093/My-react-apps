@@ -17,7 +17,12 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false)
   const [socketConnected, setSocketConnected] = useState(false)
   const socketRef = useRef(null)
+  const selectedUserRef = useRef(null)
   const bottomRef = useRef(null)
+
+  useEffect(() => {
+    selectedUserRef.current = selectedUser
+  }, [selectedUser])
 
   useEffect(() => {
     if (!user) return
@@ -26,12 +31,23 @@ function App() {
 
     const socket = io(API_URL, {
       transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
     })
+
     socketRef.current = socket
 
     socket.on('connect', () => {
       setSocketConnected(true)
+      setMessage('')
       socket.emit('user:online', user.id)
+      loadUsers()
+    })
+
+    socket.on('connect_error', () => {
+      setSocketConnected(false)
+      setMessage('Real-time connection failed. Retrying...')
     })
 
     socket.on('disconnect', () => {
@@ -42,25 +58,31 @@ function App() {
       setUsers((current) =>
         current.map((item) => item.id === userId ? { ...item, status } : item),
       )
+
       setSelectedUser((current) =>
         current?.id === userId ? { ...current, status } : current,
       )
     })
 
     socket.on('private:message', (incoming) => {
+      const openUser = selectedUserRef.current
+
       const belongsToOpenChat =
-        selectedUser &&
-        ((incoming.senderId === user.id && incoming.receiverId === selectedUser.id) ||
-          (incoming.senderId === selectedUser.id && incoming.receiverId === user.id))
+        openUser &&
+        ((incoming.senderId === user.id && incoming.receiverId === openUser.id) ||
+          (incoming.senderId === openUser.id && incoming.receiverId === user.id))
 
       if (belongsToOpenChat) {
         setMessages((current) =>
-          current.some((item) => item.id === incoming.id) ? current : [...current, incoming],
+          current.some((item) => item.id === incoming.id)
+            ? current
+            : [...current, incoming],
         )
       }
     })
 
     return () => {
+      socket.removeAllListeners()
       socket.disconnect()
       socketRef.current = null
       setSocketConnected(false)
@@ -74,13 +96,19 @@ function App() {
 
     async function loadMessages() {
       setChatLoading(true)
+
       try {
         const response = await fetch(
           API_URL + '/api/messages/' + user.id + '/' + selectedUser.id,
         )
+
         if (!response.ok) throw new Error('Could not load messages')
+
         const data = await response.json()
-        if (!cancelled) setMessages(data)
+
+        if (!cancelled) {
+          setMessages(data)
+        }
       } catch {
         if (!cancelled) setMessages([])
       } finally {
@@ -89,6 +117,7 @@ function App() {
     }
 
     loadMessages()
+
     return () => {
       cancelled = true
     }
@@ -101,9 +130,20 @@ function App() {
   async function loadUsers() {
     try {
       const response = await fetch(API_URL + '/api/users')
+
       if (!response.ok) return
+
       const data = await response.json()
-      setUsers(data.filter((item) => item.id !== user?.id))
+
+      setUsers((current) => {
+        const currentMap = new Map(current.map((item) => [item.id, item]))
+        return data
+          .filter((item) => item.id !== user?.id)
+          .map((item) => ({
+            ...item,
+            status: currentMap.get(item.id)?.status ?? item.status,
+          }))
+      })
     } catch {
       // Keep the current list if the backend is temporarily unavailable.
     }
@@ -131,7 +171,10 @@ function App() {
       })
 
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Something went wrong')
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Something went wrong')
+      }
 
       setUser(data.user)
       setMessage(mode === 'login' ? 'Login successful!' : 'Account created successfully!')
@@ -147,6 +190,7 @@ function App() {
     e?.preventDefault()
 
     const trimmed = text.trim()
+
     if (!trimmed || !selectedUser || !socketRef.current?.connected) return
 
     socketRef.current.emit(
@@ -201,6 +245,7 @@ function App() {
               </span>
             </div>
           </div>
+
           <button className="logout-button" onClick={logout}>Logout</button>
         </header>
 
@@ -224,7 +269,10 @@ function App() {
                       setMessages([])
                     }}
                   >
-                    <span className="small-avatar">{item.name.charAt(0).toUpperCase()}</span>
+                    <span className="small-avatar">
+                      {item.name.charAt(0).toUpperCase()}
+                    </span>
+
                     <span className="user-details">
                       <strong>{item.name}</strong>
                       <small>{item.username}</small>
@@ -245,6 +293,7 @@ function App() {
                   <div className="selected-avatar small">
                     {selectedUser.name.charAt(0).toUpperCase()}
                   </div>
+
                   <div>
                     <h2>{selectedUser.name}</h2>
                     <p className={selectedUser.status === 'online' ? 'status online' : 'status'}>
@@ -276,6 +325,7 @@ function App() {
                       </div>
                     ))
                   )}
+
                   <div ref={bottomRef} />
                 </div>
 
@@ -287,6 +337,7 @@ function App() {
                     maxLength={2000}
                     disabled={!socketConnected}
                   />
+
                   <button type="submit" disabled={!socketConnected || !text.trim()}>
                     Send
                   </button>
@@ -309,46 +360,103 @@ function App() {
     <main className="app-shell">
       <section className="auth-card">
         <div className="brand">ChatSpace</div>
+
         <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+
         <p className="subtitle">
-          {mode === 'login' ? 'Sign in to continue to your chats.' : 'Create an account to start chatting.'}
+          {mode === 'login'
+            ? 'Sign in to continue to your chats.'
+            : 'Create an account to start chatting.'}
         </p>
 
         <div className="tabs">
-          <button className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Login</button>
-          <button className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Register</button>
+          <button
+            className={mode === 'login' ? 'active' : ''}
+            onClick={() => setMode('login')}
+          >
+            Login
+          </button>
+
+          <button
+            className={mode === 'register' ? 'active' : ''}
+            onClick={() => setMode('register')}
+          >
+            Register
+          </button>
         </div>
 
         <form onSubmit={submit}>
           {mode === 'register' && (
             <>
-              <label>Name
-                <input name="name" value={form.name} onChange={updateField} placeholder="Enter your name" />
+              <label>
+                Name
+                <input
+                  name="name"
+                  value={form.name}
+                  onChange={updateField}
+                  placeholder="Enter your name"
+                />
               </label>
-              <label>Phone number <span>(optional)</span>
-                <input name="phone" value={form.phone} onChange={updateField} placeholder="Enter phone number" />
+
+              <label>
+                Phone number <span>(optional)</span>
+                <input
+                  name="phone"
+                  value={form.phone}
+                  onChange={updateField}
+                  placeholder="Enter phone number"
+                />
               </label>
             </>
           )}
 
-          <label>Email / Username
-            <input name="username" type="email" value={form.username} onChange={updateField} placeholder="you@example.com" />
+          <label>
+            Email / Username
+            <input
+              name="username"
+              type="email"
+              value={form.username}
+              onChange={updateField}
+              placeholder="you@example.com"
+            />
           </label>
 
-          <label>Password
-            <input name="password" type="password" value={form.password} onChange={updateField} placeholder="Minimum 6 characters" />
+          <label>
+            Password
+            <input
+              name="password"
+              type="password"
+              value={form.password}
+              onChange={updateField}
+              placeholder="Minimum 6 characters"
+            />
           </label>
 
           <button className="primary-button" disabled={loading}>
-            {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create account'}
+            {loading
+              ? 'Please wait...'
+              : mode === 'login'
+                ? 'Login'
+                : 'Create account'}
           </button>
         </form>
 
-        {message && <p className={message.includes('successful') ? 'message success' : 'message error'}>{message}</p>}
+        {message && (
+          <p className={message.includes('successful') ? 'message success' : 'message error'}>
+            {message}
+          </p>
+        )}
 
         <p className="switch-text">
-          {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}{' '}
-          <button type="button" className="link-button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+          {mode === 'login'
+            ? "Don't have an account?"
+            : 'Already have an account?'}{' '}
+
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+          >
             {mode === 'login' ? 'Register' : 'Login'}
           </button>
         </p>
