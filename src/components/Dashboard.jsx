@@ -10,7 +10,7 @@ const Icon = ({ name, size = 20 }) => {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
 
-export default function Dashboard({ user, users, search, setSearch, onlineCount, openUser, socketConnected, onLogout }) {
+export default function Dashboard({ user, users, search, setSearch, onlineCount, openUser, unreadCounts = {}, socketConnected, onLogout }) {
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
 
   useEffect(() => {
@@ -92,7 +92,10 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
                 <strong>{item.name}</strong>
                 <small>{item.status === 'online' ? 'Available now' : 'Offline'}</small>
               </span>
-              <span className="user-arrow"><Icon name="arrow" size={19} /></span>
+              <span className="user-card-actions">
+                {unreadCounts[item.id] > 0 && <span className="unread-badge">{unreadCounts[item.id] > 99 ? '99+' : unreadCounts[item.id]}</span>}
+                <span className="user-arrow"><Icon name="arrow" size={19} /></span>
+              </span>
             </button>
           ))}
           {!filteredUsers.length && (
