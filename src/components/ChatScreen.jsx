@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const Icon = ({ name, size = 20 }) => {
   const paths = {
@@ -10,6 +10,47 @@ const Icon = ({ name, size = 20 }) => {
 
 export default function ChatScreen({ user, selectedUser, messages, text, setText, notice, chatLoading, socketConnected, sendMessage, onBack }) {
   const chatBodyRef = useRef(null)
+  const knownMessageIdsRef = useRef(new Set())
+  const initializedMessagesRef = useRef(false)
+  const [animatedMessageIds, setAnimatedMessageIds] = useState(new Set())
+
+  useEffect(() => {
+    if (chatLoading) return
+
+    const currentIds = new Set(messages.map((item) => item.id))
+
+    if (!initializedMessagesRef.current) {
+      knownMessageIdsRef.current = currentIds
+      initializedMessagesRef.current = true
+      return
+    }
+
+    const newIds = [...currentIds].filter((id) => !knownMessageIdsRef.current.has(id))
+
+    if (newIds.length) {
+      setAnimatedMessageIds((current) => {
+        const next = new Set(current)
+        newIds.forEach((id) => next.add(id))
+        return next
+      })
+
+      window.setTimeout(() => {
+        setAnimatedMessageIds((current) => {
+          const next = new Set(current)
+          newIds.forEach((id) => next.delete(id))
+          return next
+        })
+      }, 320)
+    }
+
+    knownMessageIdsRef.current = currentIds
+  }, [messages, chatLoading, selectedUser?.id])
+
+  useEffect(() => {
+    knownMessageIdsRef.current = new Set()
+    initializedMessagesRef.current = false
+    setAnimatedMessageIds(new Set())
+  }, [selectedUser?.id])
 
   useEffect(() => {
     if (!chatBodyRef.current || chatLoading) return
@@ -71,7 +112,7 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
                     </div>
                   )}
                   <div className={item.senderId === user.id ? 'message-line mine' : 'message-line'}>
-                    <div className="message">
+                    <div className={animatedMessageIds.has(item.id) ? 'message message-new' : 'message'}>
                       <span>{item.text}</span>
                       <small>{itemDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</small>
                     </div>
