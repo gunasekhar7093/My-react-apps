@@ -145,6 +145,18 @@ function App() {
             ? current
             : [...current, incoming]
         )
+
+        const otherUserId = incoming.senderId === user.id
+          ? incoming.receiverId
+          : incoming.senderId
+
+        setUsers((current) =>
+          current.map((item) =>
+            item.id === otherUserId
+              ? { ...item, latestMessageAt: incoming.createdAt }
+              : item
+          )
+        )
       }
     })
 
