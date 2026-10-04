@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { io } from 'socket.io-client'
 import './App.css'
 
 const API_URL = 'https://my-react-apps-aet5.onrender.com'
@@ -9,15 +10,93 @@ function App() {
   const [user, setUser] = useState(null)
   const [users, setUsers] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [text, setText] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
+  const [socketConnected, setSocketConnected] = useState(false)
+  const socketRef = useRef(null)
+  const bottomRef = useRef(null)
 
   useEffect(() => {
     if (!user) return
+
     loadUsers()
-    const timer = setInterval(loadUsers, 5000)
-    return () => clearInterval(timer)
+
+    const socket = io(API_URL, {
+      transports: ['websocket', 'polling'],
+    })
+    socketRef.current = socket
+
+    socket.on('connect', () => {
+      setSocketConnected(true)
+      socket.emit('user:online', user.id)
+    })
+
+    socket.on('disconnect', () => {
+      setSocketConnected(false)
+    })
+
+    socket.on('user:status', ({ userId, status }) => {
+      setUsers((current) =>
+        current.map((item) => item.id === userId ? { ...item, status } : item),
+      )
+      setSelectedUser((current) =>
+        current?.id === userId ? { ...current, status } : current,
+      )
+    })
+
+    socket.on('private:message', (incoming) => {
+      const belongsToOpenChat =
+        selectedUser &&
+        ((incoming.senderId === user.id && incoming.receiverId === selectedUser.id) ||
+          (incoming.senderId === selectedUser.id && incoming.receiverId === user.id))
+
+      if (belongsToOpenChat) {
+        setMessages((current) =>
+          current.some((item) => item.id === incoming.id) ? current : [...current, incoming],
+        )
+      }
+    })
+
+    return () => {
+      socket.disconnect()
+      socketRef.current = null
+      setSocketConnected(false)
+    }
   }, [user])
+
+  useEffect(() => {
+    if (!selectedUser || !user) return
+
+    let cancelled = false
+
+    async function loadMessages() {
+      setChatLoading(true)
+      try {
+        const response = await fetch(
+          API_URL + '/api/messages/' + user.id + '/' + selectedUser.id,
+        )
+        if (!response.ok) throw new Error('Could not load messages')
+        const data = await response.json()
+        if (!cancelled) setMessages(data)
+      } catch {
+        if (!cancelled) setMessages([])
+      } finally {
+        if (!cancelled) setChatLoading(false)
+      }
+    }
+
+    loadMessages()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedUser, user])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   async function loadUsers() {
     try {
@@ -38,6 +117,7 @@ function App() {
     e.preventDefault()
     setMessage('')
     setLoading(true)
+
     try {
       const endpoint = mode === 'login' ? '/api/login' : '/api/register'
       const body = mode === 'login'
@@ -49,6 +129,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Something went wrong')
 
@@ -62,15 +143,48 @@ function App() {
     }
   }
 
+  function sendMessage(e) {
+    e?.preventDefault()
+
+    const trimmed = text.trim()
+    if (!trimmed || !selectedUser || !socketRef.current?.connected) return
+
+    socketRef.current.emit(
+      'private:message',
+      {
+        receiverId: selectedUser.id,
+        text: trimmed,
+      },
+      (result) => {
+        if (!result?.ok) {
+          setMessage(result?.error || 'Could not send message')
+        } else {
+          setText('')
+          setMessage('')
+        }
+      },
+    )
+  }
+
   async function logout() {
-    await fetch(API_URL + '/api/logout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.id }),
-    })
+    socketRef.current?.disconnect()
+
+    try {
+      await fetch(API_URL + '/api/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id }),
+      })
+    } catch {
+      // Socket disconnect also marks the user offline.
+    }
+
     setUser(null)
     setUsers([])
     setSelectedUser(null)
+    setMessages([])
+    setText('')
+    setSocketConnected(false)
     setMessage('')
   }
 
@@ -80,7 +194,12 @@ function App() {
         <header className="chat-header">
           <div>
             <div className="brand">ChatSpace</div>
-            <div className="logged-in-as">Logged in as <strong>{user.name}</strong></div>
+            <div className="logged-in-as">
+              Logged in as <strong>{user.name}</strong>
+              <span className={socketConnected ? 'connection online' : 'connection'}>
+                ● {socketConnected ? 'connected' : 'connecting'}
+              </span>
+            </div>
           </div>
           <button className="logout-button" onClick={logout}>Logout</button>
         </header>
@@ -100,7 +219,10 @@ function App() {
                   <button
                     key={item.id}
                     className={selectedUser?.id === item.id ? 'user-item selected' : 'user-item'}
-                    onClick={() => setSelectedUser(item)}
+                    onClick={() => {
+                      setSelectedUser(item)
+                      setMessages([])
+                    }}
                   >
                     <span className="small-avatar">{item.name.charAt(0).toUpperCase()}</span>
                     <span className="user-details">
@@ -116,20 +238,66 @@ function App() {
             )}
           </aside>
 
-          <section className="chat-placeholder">
+          <section className="chat-window">
             {selectedUser ? (
               <>
-                <div className="selected-avatar">{selectedUser.name.charAt(0).toUpperCase()}</div>
-                <h2>{selectedUser.name}</h2>
-                <p>{selectedUser.username}</p>
-                <div className="coming-soon">💬 One-to-one messaging will be added next.</div>
+                <header className="conversation-header">
+                  <div className="selected-avatar small">
+                    {selectedUser.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h2>{selectedUser.name}</h2>
+                    <p className={selectedUser.status === 'online' ? 'status online' : 'status'}>
+                      ● {selectedUser.status}
+                    </p>
+                  </div>
+                </header>
+
+                <div className="messages-area">
+                  {chatLoading ? (
+                    <p className="chat-info">Loading messages...</p>
+                  ) : messages.length === 0 ? (
+                    <p className="chat-info">No messages yet. Say hello! 👋</p>
+                  ) : (
+                    messages.map((item) => (
+                      <div
+                        key={item.id}
+                        className={item.senderId === user.id ? 'message-row mine' : 'message-row'}
+                      >
+                        <div className="message-bubble">
+                          <span>{item.text}</span>
+                          <small>
+                            {new Date(item.createdAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </small>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  <div ref={bottomRef} />
+                </div>
+
+                <form className="message-form" onSubmit={sendMessage}>
+                  <input
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder={socketConnected ? 'Type a message...' : 'Connecting...'}
+                    maxLength={2000}
+                    disabled={!socketConnected}
+                  />
+                  <button type="submit" disabled={!socketConnected || !text.trim()}>
+                    Send
+                  </button>
+                </form>
               </>
             ) : (
-              <>
+              <div className="chat-placeholder">
                 <div className="chat-icon">💬</div>
                 <h2>Select a user</h2>
                 <p>Choose someone from the list to start a conversation.</p>
-              </>
+              </div>
             )}
           </section>
         </section>
