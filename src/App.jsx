@@ -98,7 +98,16 @@ function App() {
         })
         if (!response.ok) return
         const data = await response.json()
-        if (active) setUsers(data.filter((item) => item.id !== user.id))
+        if (active) {
+          setUsers(data.filter((item) => item.id !== user.id))
+          setUnreadCounts(
+            Object.fromEntries(
+              data
+                .filter((item) => item.id !== user.id && item.unreadCount > 0)
+                .map((item) => [item.id, item.unreadCount])
+            )
+          )
+        }
       } catch {}
     }
 
