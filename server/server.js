@@ -3,28 +3,99 @@ import cors from 'cors'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Server as SocketIOServer } from 'socket.io'
 
 const app = express()
 const httpServer = http.createServer(app)
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*'
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: '*',
+    origin: FRONTEND_ORIGIN,
     methods: ['GET', 'POST'],
   },
 })
 
 const PORT = process.env.PORT || 3000
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
+
+if (!process.env.SESSION_SECRET) {
+  console.warn('SESSION_SECRET is not set. Sessions will be invalidated when the server restarts.')
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.join(__dirname, 'data')
 const USERS_FILE = path.join(DATA_DIR, 'users.json')
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json')
 
-app.use(cors())
+app.use(cors({ origin: FRONTEND_ORIGIN }))
 app.use(express.json())
 
 const onlineConnections = new Map()
+const sessions = new Map()
+
+function createSession(userId) {
+  const token = randomBytes(32).toString('hex')
+  sessions.set(token, {
+    userId,
+    expiresAt: Date.now() + SESSION_TTL_MS,
+  })
+  return token
+}
+
+function getSession(token) {
+  if (!token) return null
+
+  const session = sessions.get(token)
+  if (!session) return null
+
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(token)
+    return null
+  }
+
+  return session
+}
+
+function revokeSession(token) {
+  if (token) sessions.delete(token)
+}
+
+function getBearerToken(req) {
+  const header = req.get('authorization')
+  if (!header?.startsWith('Bearer ')) return null
+  return header.slice(7).trim() || null
+}
+
+function authenticateToken(token) {
+  const session = getSession(token)
+  return session?.userId || null
+}
+
+function requireAuth(req, res, next) {
+  const token = getBearerToken(req)
+  const userId = authenticateToken(token)
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Authentication required' })
+  }
+
+  req.userId = userId
+  req.sessionToken = token
+  next()
+}
+
+const sessionCleanup = setInterval(() => {
+  const now = Date.now()
+  for (const [token, session] of sessions) {
+    if (session.expiresAt <= now) sessions.delete(token)
+  }
+}, 60 * 60 * 1000)
+
+sessionCleanup.unref?.()
 
 async function readUsers() {
   const data = await fs.readFile(USERS_FILE, 'utf8')
@@ -68,6 +139,36 @@ async function setUserStatus(userId, status) {
   return publicUser(user)
 }
 
+async function getUserById(userId) {
+  const users = await readUsers()
+  return users.find((item) => item.id === userId) || null
+}
+
+async function authenticateSocket(socket, next) {
+  const token = socket.handshake.auth?.token
+  const userId = authenticateToken(token)
+
+  if (!userId) {
+    return next(new Error('Authentication required'))
+  }
+
+  const user = await getUserById(userId)
+
+  if (!user) {
+    return next(new Error('User not found'))
+  }
+
+  socket.data.userId = userId
+  next()
+}
+
+io.use((socket, next) => {
+  authenticateSocket(socket, next).catch((error) => {
+    console.error('Socket authentication error:', error.message)
+    next(new Error('Authentication failed'))
+  })
+})
+
 app.get('/', (_req, res) => {
   res.json({
     message: 'My React Apps chat backend is running',
@@ -79,7 +180,22 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'chat-backend' })
 })
 
-app.get('/api/users', async (_req, res) => {
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const user = await getUserById(req.userId)
+
+    if (!user) {
+      revokeSession(req.sessionToken)
+      return res.status(401).json({ error: 'Session is no longer valid' })
+    }
+
+    res.json({ user: publicUser(user) })
+  } catch {
+    res.status(500).json({ error: 'Could not load authenticated user' })
+  }
+})
+
+app.get('/api/users', requireAuth, async (_req, res) => {
   try {
     res.json((await readUsers()).map(publicUser))
   } catch {
@@ -118,8 +234,11 @@ app.post('/api/register', async (req, res) => {
     users.push(newUser)
     await writeUsers(users)
 
+    const token = createSession(newUser.id)
+
     res.status(201).json({
       message: 'Registration successful',
+      token,
       user: publicUser(newUser),
     })
   } catch {
@@ -146,8 +265,11 @@ app.post('/api/login', async (req, res) => {
     user.status = 'online'
     await writeUsers(users)
 
+    const token = createSession(user.id)
+
     res.json({
       message: 'Login successful',
+      token,
       user: publicUser(user),
     })
   } catch {
@@ -155,13 +277,16 @@ app.post('/api/login', async (req, res) => {
   }
 })
 
-app.post('/api/logout', async (req, res) => {
+app.post('/api/logout', requireAuth, async (req, res) => {
   try {
-    const { userId } = req.body
     const users = await readUsers()
-    const user = users.find((item) => item.id === userId)
+    const user = users.find((item) => item.id === req.userId)
 
-    if (!user) return res.status(404).json({ error: 'User not found' })
+    revokeSession(req.sessionToken)
+
+    if (!user) {
+      return res.json({ message: 'Logout successful' })
+    }
 
     user.status = 'offline'
     await writeUsers(users)
@@ -172,9 +297,19 @@ app.post('/api/logout', async (req, res) => {
   }
 })
 
-app.get('/api/messages/:userId/:otherUserId', async (req, res) => {
+app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
   try {
     const { userId, otherUserId } = req.params
+
+    if (req.userId !== userId) {
+      return res.status(403).json({ error: 'You can only access your own conversations' })
+    }
+
+    const otherUser = await getUserById(otherUserId)
+    if (!otherUser) {
+      return res.status(404).json({ error: 'Other user not found' })
+    }
+
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100)
     const before = req.query.before
 
@@ -209,39 +344,33 @@ app.get('/api/messages/:userId/:otherUserId', async (req, res) => {
   }
 })
 
-io.on('connection', (socket) => {
-  socket.on('user:online', async (userId) => {
-    try {
-      if (!userId) return
+io.on('connection', async (socket) => {
+  const userId = socket.data.userId
 
-      const users = await readUsers()
-      const user = users.find((item) => item.id === userId)
-      if (!user) return
+  try {
+    socket.join(userId)
 
-      socket.data.userId = userId
-      socket.join(userId)
+    const count = (onlineConnections.get(userId) || 0) + 1
+    onlineConnections.set(userId, count)
 
-      const count = (onlineConnections.get(userId) || 0) + 1
-      onlineConnections.set(userId, count)
+    const publicUserData = await setUserStatus(userId, 'online')
 
-      const publicUserData = await setUserStatus(userId, 'online')
-      if (publicUserData) {
-        io.emit('user:status', { userId, status: 'online' })
+    if (publicUserData) {
+      io.emit('user:status', { userId, status: 'online' })
 
-        const currentUsers = await readUsers()
-        for (const onlineUser of currentUsers) {
-          if (onlineUser.id !== userId && onlineUser.status === 'online') {
-            socket.emit('user:status', {
-              userId: onlineUser.id,
-              status: 'online',
-            })
-          }
+      const currentUsers = await readUsers()
+      for (const onlineUser of currentUsers) {
+        if (onlineUser.id !== userId && onlineUser.status === 'online') {
+          socket.emit('user:status', {
+            userId: onlineUser.id,
+            status: 'online',
+          })
         }
       }
-    } catch (error) {
-      console.error('Could not mark user online:', error.message)
     }
-  })
+  } catch (error) {
+    console.error('Could not mark user online:', error.message)
+  }
 
   socket.on('private:message', async (payload, callback) => {
     try {
@@ -250,15 +379,14 @@ io.on('connection', (socket) => {
       const text = payload?.text?.trim()
 
       if (!senderId || !receiverId || !text) {
-        return callback?.({ ok: false, error: 'Sender, receiver and message text are required' })
+        return callback?.({ ok: false, error: 'Receiver and message text are required' })
       }
 
       if (text.length > 2000) {
         return callback?.({ ok: false, error: 'Message is too long' })
       }
 
-      const users = await readUsers()
-      const receiver = users.find((item) => item.id === receiverId)
+      const receiver = await getUserById(receiverId)
 
       if (!receiver) {
         return callback?.({ ok: false, error: 'Receiver not found' })
@@ -287,9 +415,6 @@ io.on('connection', (socket) => {
   })
 
   socket.on('disconnect', async () => {
-    const userId = socket.data.userId
-    if (!userId) return
-
     try {
       const count = Math.max((onlineConnections.get(userId) || 1) - 1, 0)
 
