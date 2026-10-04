@@ -209,6 +209,16 @@ io.on('connection', (socket) => {
       const publicUserData = await setUserStatus(userId, 'online')
       if (publicUserData) {
         io.emit('user:status', { userId, status: 'online' })
+
+        const currentUsers = await readUsers()
+        for (const onlineUser of currentUsers) {
+          if (onlineUser.id !== userId && onlineUser.status === 'online') {
+            socket.emit('user:status', {
+              userId: onlineUser.id,
+              status: 'online',
+            })
+          }
+        }
       }
     } catch (error) {
       console.error('Could not mark user online:', error.message)
