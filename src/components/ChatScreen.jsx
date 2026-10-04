@@ -58,14 +58,27 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
           </div>
         ) : (
           <div className="messages">
-            {messages.map((item) => (
-              <div key={item.id} className={item.senderId === user.id ? 'message-line mine' : 'message-line'}>
-                <div className="message">
-                  <span>{item.text}</span>
-                  <small>{new Date(item.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</small>
+            {messages.map((item, index) => {
+              const itemDate = new Date(item.createdAt)
+              const previousDate = index > 0 ? new Date(messages[index - 1].createdAt) : null
+              const isNewDate = !previousDate || itemDate.toDateString() !== previousDate.toDateString()
+
+              return (
+                <div key={item.id}>
+                  {isNewDate && (
+                    <div className="chat-date-divider">
+                      <span>{itemDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                    </div>
+                  )}
+                  <div className={item.senderId === user.id ? 'message-line mine' : 'message-line'}>
+                    <div className="message">
+                      <span>{item.text}</span>
+                      <small>{itemDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</small>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </section>
