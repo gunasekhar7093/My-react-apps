@@ -25,6 +25,7 @@ function App() {
   const [unreadCounts, setUnreadCounts] = useState({})
   const [search, setSearch] = useState('')
   const [messages, setMessages] = useState([])
+  const [conversationCache, setConversationCache] = useState({})
   const [text, setText] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
@@ -164,11 +165,12 @@ function App() {
         ((incoming.senderId === user.id && incoming.receiverId === openUser.id) ||
           (incoming.senderId === openUser.id && incoming.receiverId === user.id))
       ) {
-        setMessages((current) =>
-          current.some((item) => item.id === incoming.id)
-            ? current
-            : [...current, incoming]
-        )
+        setMessages((current) => {
+          if (current.some((item) => item.id === incoming.id)) return current
+          const next = [...current, incoming]
+          setConversationCache((cache) => ({ ...cache, [otherUserId]: next }))
+          return next
+        })
 
         setUsers((current) =>
           current.map((item) =>
@@ -269,14 +271,20 @@ function App() {
   useEffect(() => {
     if (!selectedUser || !user) {
       setMessages([])
+      setChatLoading(false)
       return
     }
 
     let cancelled = false
+    const cachedMessages = conversationCache[selectedUser.id]
+
+    // Show cached messages immediately when this conversation was already opened.
+    // Only show the loading state when there is genuinely no cached conversation.
+    setMessages(cachedMessages || [])
+    setChatLoading(!cachedMessages)
+    setText('')
 
     async function loadMessages() {
-      setChatLoading(true)
-
       try {
         const response = await fetch(
           API_URL + '/api/messages/' + user.id + '/' + selectedUser.id,
@@ -288,17 +296,19 @@ function App() {
         const data = await response.json()
 
         if (!cancelled) {
-          setMessages(data.messages || [])
+          const freshMessages = data.messages || []
+          setMessages(freshMessages)
+          setConversationCache((current) => ({
+            ...current,
+            [selectedUser.id]: freshMessages,
+          }))
           setChatLoading(false)
         }
       } catch {
-        if (!cancelled) setMessages([])
-      } finally {
         if (!cancelled) setChatLoading(false)
       }
     }
 
-    setText('')
     loadMessages()
 
     return () => {
