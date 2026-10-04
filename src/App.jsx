@@ -309,6 +309,30 @@ function App() {
   if (user) {
     return (
       <main className="chat-app">
+        <header className="topbar">
+          <div className="topbar-brand">
+            <div className="brand-mark"><Icon name="message" /></div>
+            <div>
+              <strong>ChatSpace</strong>
+              <span>Private conversations</span>
+            </div>
+          </div>
+
+          <div className="topbar-actions">
+            <div className={`connection-pill ${socketConnected ? 'connected' : ''}`}>
+              <span />
+              {socketConnected ? 'Connected' : 'Reconnecting'}
+            </div>
+            <div className="account-chip">
+              <Avatar name={user.name} size="sm" online={socketConnected} />
+              <span>{user.name}</span>
+            </div>
+            <button className="icon-button logout-icon" onClick={() => setShowLogoutDialog(true)} aria-label="Logout" title="Logout">
+              <Icon name="logout" />
+            </button>
+          </div>
+        </header>
+
         <section className="workspace">
           <aside className={`users-panel ${mobileUsersOpen ? 'mobile-open' : ''}`}>
             <div className="sidebar-heading">
