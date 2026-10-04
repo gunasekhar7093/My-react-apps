@@ -1,4 +1,4 @@
-import React from 'react'
+import { useMemo } from 'react'
 
 export default function Dashboard({
   users,
@@ -13,6 +13,11 @@ export default function Dashboard({
   Avatar,
   Icon,
 }) {
+  const filteredUsers = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return users
+    return users.filter((item) => item.name.toLowerCase().includes(query) || item.username.toLowerCase().includes(query))
+  }, [users, search])
   return (
           <aside className={`users-panel ${mobileUsersOpen ? 'mobile-open' : ''}`}>
             <div className="sidebar-heading">
