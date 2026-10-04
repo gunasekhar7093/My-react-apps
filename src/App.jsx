@@ -200,7 +200,7 @@ function App() {
       socketRef.current = null
       setSocketConnected(false)
     }
-  }, [user, token])
+  }, [user?.id, token])
 
   const selectedUser = useMemo(() => {
     if (!chatMatch?.params.userId) return null
