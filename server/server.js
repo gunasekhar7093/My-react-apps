@@ -1,11 +1,9 @@
 import express from 'express'
 import cors from 'cors'
 import http from 'node:http'
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { Server as SocketIOServer } from 'socket.io'
+import { MongoClient, ObjectId } from 'mongodb'
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -21,15 +19,22 @@ const io = new SocketIOServer(httpServer, {
 const PORT = process.env.PORT || 3000
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
+const MONGODB_URI = process.env.MONGODB_URI
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'chatspace'
+
+if (!MONGODB_URI) {
+  console.error('MONGODB_URI is not configured.')
+  process.exit(1)
+}
 
 if (!process.env.SESSION_SECRET) {
   console.warn('SESSION_SECRET is not set. Sessions will be invalidated when the server restarts.')
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.join(__dirname, 'data')
-const USERS_FILE = path.join(DATA_DIR, 'users.json')
-const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json')
+const mongoClient = new MongoClient(MONGODB_URI)
+let db
+let usersCollection
+let messagesCollection
 
 app.use(cors({ origin: FRONTEND_ORIGIN }))
 app.use(express.json())
@@ -110,71 +115,51 @@ function verifyPassword(password, storedPassword, salt) {
   }
 }
 
-async function readUsers() {
-  const data = await fs.readFile(USERS_FILE, 'utf8')
-  return JSON.parse(data)
-}
-
-async function writeUsers(users) {
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2) + '\n', 'utf8')
-}
-
-async function migratePlaintextPasswords() {
-  const users = await readUsers()
-  let changed = false
-
-  for (const user of users) {
-    if (typeof user.password === 'string' && user.password) {
-      const passwordData = hashPassword(user.password)
-      user.passwordHash = passwordData.hash
-      user.passwordSalt = passwordData.salt
-      delete user.password
-      changed = true
-    }
-  }
-
-  if (changed) {
-    await writeUsers(users)
-    console.log('Migrated plaintext passwords to secure password hashes.')
-  }
-}
-
-async function readMessages() {
-  try {
-    const data = await fs.readFile(MESSAGES_FILE, 'utf8')
-    return JSON.parse(data)
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      await fs.writeFile(MESSAGES_FILE, '[]\n', 'utf8')
-      return []
-    }
-    throw error
-  }
-}
-
-async function writeMessages(messages) {
-  await fs.writeFile(MESSAGES_FILE, JSON.stringify(messages, null, 2) + '\n', 'utf8')
-}
-
 function publicUser(user) {
-  const { password, passwordHash, passwordSalt, ...safeUser } = user
+  const { _id, password, passwordHash, passwordSalt, ...safeUser } = user
   return safeUser
 }
 
-async function setUserStatus(userId, status) {
-  const users = await readUsers()
-  const user = users.find((item) => item.id === userId)
-
+function userToPublic(user) {
   if (!user) return null
-
-  user.status = status
-  await writeUsers(users)
   return publicUser(user)
 }
 
 async function getUserById(userId) {
-  const users = await readUsers()
-  return users.find((item) => item.id === userId) || null
+  return usersCollection.findOne({ id: userId })
+}
+
+async function setUserStatus(userId, status) {
+  const result = await usersCollection.findOneAndUpdate(
+    { id: userId },
+    { $set: { status } },
+    { returnDocument: 'after' },
+  )
+  return userToPublic(result)
+}
+
+async function migrateLegacyUsers() {
+  const legacyUsers = await usersCollection.find({}).toArray()
+  let changed = false
+
+  for (const user of legacyUsers) {
+    if (typeof user.password === 'string' && user.password) {
+      const passwordData = hashPassword(user.password)
+      await usersCollection.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            passwordHash: passwordData.hash,
+            passwordSalt: passwordData.salt,
+          },
+          $unset: { password: '' },
+        },
+      )
+      changed = true
+    }
+  }
+
+  if (changed) console.log('Migrated plaintext passwords to secure password hashes.')
 }
 
 async function authenticateSocket(socket, next) {
