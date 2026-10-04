@@ -148,9 +148,12 @@ function App() {
 
     socket.on('disconnect', () => setSocketConnected(false))
 
-    socket.on('user:status', ({ userId, status }) => {
+    socket.on('user:status', ({ userId, status, lastSeenAt }) => {
       setUsers((current) =>
-        current.map((item) => item.id === userId ? { ...item, status } : item)
+        current.map((item) => item.id === userId
+          ? { ...item, status, ...(lastSeenAt ? { lastSeenAt } : {}) }
+          : item
+        )
       )
     })
 
