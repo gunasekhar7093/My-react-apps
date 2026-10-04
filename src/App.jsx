@@ -42,14 +42,43 @@ function App() {
   const [search, setSearch] = useState('')
   const [mobileUsersOpen, setMobileUsersOpen] = useState(true)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
+  const [hasSession, setHasSession] = useState(false)
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const sessionRestoredRef = useRef(false)
 
   useEffect(() => {
     selectedUserRef.current = selectedUser
   }, [selectedUser])
+
+  useEffect(() => {
+    try {
+      const savedUser = sessionStorage.getItem('chatspace_user')
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser)
+        if (parsedUser?.id) {
+          sessionRestoredRef.current = true
+          setUser(parsedUser)
+        }
+      }
+    } catch {
+      sessionStorage.removeItem('chatspace_user')
+    } finally {
+      setHasSession(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasSession) return
+    try {
+      if (user) sessionStorage.setItem('chatspace_user', JSON.stringify(user))
+      else if (!sessionRestoredRef.current) sessionStorage.removeItem('chatspace_user')
+    } catch {}
+  }, [user, hasSession])
 
   useEffect(() => {
     if (!user) return
@@ -113,7 +142,10 @@ function App() {
         const response = await fetch(API_URL + '/api/messages/' + user.id + '/' + selectedUser.id)
         if (!response.ok) throw new Error()
         const data = await response.json()
-        if (!cancelled) setMessages(data)
+        if (!cancelled) {
+          setMessages(data.messages || [])
+          setHasMoreMessages(Boolean(data.hasMore))
+        }
       } catch {
         if (!cancelled) setMessages([])
       } finally {
@@ -176,7 +208,50 @@ function App() {
   function openUser(item) {
     setSelectedUser(item)
     setMessages([])
+    setHasMoreMessages(false)
     setMobileUsersOpen(false)
+  }
+
+  async function loadOlderMessages() {
+    if (!selectedUser || !user || loadingOlder || !hasMoreMessages || !messages.length) return
+
+    const oldest = messages[0]?.createdAt
+    if (!oldest) return
+
+    const container = document.querySelector('.messages-area')
+    const previousHeight = container?.scrollHeight || 0
+
+    setLoadingOlder(true)
+    try {
+      const response = await fetch(
+        API_URL + '/api/messages/' + user.id + '/' + selectedUser.id +
+        '?limit=40&before=' + encodeURIComponent(oldest),
+      )
+      if (!response.ok) throw new Error()
+
+      const data = await response.json()
+      const older = data.messages || []
+
+      if (older.length) {
+        setMessages((current) => [...older, ...current])
+        setHasMoreMessages(Boolean(data.hasMore))
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - previousHeight
+        })
+      } else {
+        setHasMoreMessages(false)
+      }
+    } catch {
+      setNotice('Could not load older messages.')
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
+
+  function handleMessagesScroll(e) {
+    if (e.currentTarget.scrollTop < 80 && hasMoreMessages && !loadingOlder) {
+      loadOlderMessages()
+    }
   }
 
   function sendMessage(e) {
@@ -220,6 +295,8 @@ function App() {
   }, [users, search])
 
   const onlineCount = users.filter((item) => item.status === 'online').length
+
+  if (!hasSession) return null
 
   if (user) {
     return (
@@ -309,7 +386,8 @@ function App() {
                   </div>
                 </header>
 
-                <div className="messages-area">
+                <div className="messages-area" onScroll={handleMessagesScroll}>
+                  {loadingOlder && <div className="older-loader"><span className="spinner" /> Loading older messages…</div>}
                   {chatLoading ? (
                     <div className="chat-state"><span className="spinner" /> Loading conversation…</div>
                   ) : messages.length === 0 ? (
