@@ -3,7 +3,7 @@ import cors from 'cors'
 import http from 'node:http'
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
 import { Server as SocketIOServer } from 'socket.io'
-import { MongoClient, ObjectId } from 'mongodb'
+import { MongoClient } from 'mongodb'
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -214,32 +214,46 @@ app.get('/api/me', requireAuth, async (req, res) => {
 
 app.get('/api/users', requireAuth, async (req, res) => {
   try {
-    const users = await readUsers()
-    const messages = await readMessages()
-    const latestMessageAt = new Map()
+    const users = await usersCollection
+      .find({ id: { $ne: req.userId } }, { projection: { _id: 0, passwordHash: 0, passwordSalt: 0, password: 0 } })
+      .toArray()
 
-    for (const message of messages) {
-      if (message.senderId !== req.userId && message.receiverId !== req.userId) continue
+    const latestMessages = await messagesCollection.aggregate([
+      {
+        $match: {
+          $or: [
+            { senderId: req.userId },
+            { receiverId: req.userId },
+          ],
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $eq: ['$senderId', req.userId] },
+              '$receiverId',
+              '$senderId',
+            ],
+          },
+          latestMessageAt: { $first: '$createdAt' },
+        },
+      },
+    ]).toArray()
 
-      const otherUserId = message.senderId === req.userId
-        ? message.receiverId
-        : message.senderId
-
-      const current = latestMessageAt.get(otherUserId)
-      if (!current || new Date(message.createdAt) > new Date(current)) {
-        latestMessageAt.set(otherUserId, message.createdAt)
-      }
-    }
+    const latestMessageAt = new Map(
+      latestMessages.map((item) => [item._id, item.latestMessageAt]),
+    )
 
     res.json(
-      users
-        .filter((user) => user.id !== req.userId)
-        .map((user) => ({
-          ...publicUser(user),
-          latestMessageAt: latestMessageAt.get(user.id) || null,
-        }))
+      users.map((user) => ({
+        ...publicUser(user),
+        latestMessageAt: latestMessageAt.get(user.id) || null,
+      })),
     )
-  } catch {
+  } catch (error) {
+    console.error('Could not read users:', error.message)
     res.status(500).json({ error: 'Could not read users database' })
   }
 })
@@ -256,10 +270,10 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' })
     }
 
-    const users = await readUsers()
     const normalizedUsername = username.trim().toLowerCase()
+    const existingUser = await usersCollection.findOne({ username: normalizedUsername })
 
-    if (users.some((user) => user.username.toLowerCase() === normalizedUsername)) {
+    if (existingUser) {
       return res.status(409).json({ error: 'An account with this username/email already exists' })
     }
 
@@ -277,8 +291,7 @@ app.post('/api/register', async (req, res) => {
     newUser.passwordHash = passwordData.hash
     newUser.passwordSalt = passwordData.salt
 
-    users.push(newUser)
-    await writeUsers(users)
+    await usersCollection.insertOne(newUser)
 
     const token = createToken(newUser.id)
 
@@ -300,9 +313,8 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Username/email and password are required' })
     }
 
-    const users = await readUsers()
     const normalizedUsername = username.trim().toLowerCase()
-    const user = users.find((item) => item.username.toLowerCase() === normalizedUsername)
+    const user = await usersCollection.findOne({ username: normalizedUsername })
 
     const passwordValid = user
       ? user.passwordHash && user.passwordSalt
@@ -319,11 +331,14 @@ app.post('/api/login', async (req, res) => {
       user.passwordHash = passwordData.hash
       user.passwordSalt = passwordData.salt
       delete user.password
-      await writeUsers(users)
+      await usersCollection.updateOne(
+        { _id: user._id },
+        { $set: { passwordHash: user.passwordHash, passwordSalt: user.passwordSalt }, $unset: { password: '' } },
+      )
     }
 
     user.status = 'online'
-    await writeUsers(users)
+    await usersCollection.updateOne({ _id: user._id }, { $set: { status: 'online' } })
 
     const token = createToken(user.id)
 
@@ -339,18 +354,10 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', requireAuth, async (req, res) => {
   try {
-    const users = await readUsers()
-    const user = users.find((item) => item.id === req.userId)
-
-    if (!user) {
-      return res.json({ message: 'Logout successful' })
-    }
-
-    user.status = 'offline'
-    await writeUsers(users)
-
+    await usersCollection.updateOne({ id: req.userId }, { $set: { status: 'offline' } })
     res.json({ message: 'Logout successful' })
-  } catch {
+  } catch (error) {
+    console.error('Could not log out:', error.message)
     res.status(500).json({ error: 'Could not log out' })
   }
 })
@@ -370,135 +377,61 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
 
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100)
     const before = req.query.before
-
-    const messages = await readMessages()
-
-    let conversation = messages
-      .filter(
-        (message) =>
-          (message.senderId === userId && message.receiverId === otherUserId) ||
-          (message.senderId === otherUserId && message.receiverId === userId),
-      )
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    const filter = {
+      $or: [
+        { senderId: userId, receiverId: otherUserId },
+        { senderId: otherUserId, receiverId: userId },
+      ],
+    }
 
     if (before) {
       const beforeDate = new Date(before)
       if (!Number.isNaN(beforeDate.getTime())) {
-        conversation = conversation.filter((message) => new Date(message.createdAt) < beforeDate)
+        filter.createdAt = { $lt: beforeDate.toISOString() }
       }
     }
 
-    const page = conversation.slice(0, limit)
-    const oldest = page.at(-1)
-    const hasMore = conversation.length > page.length
+    const conversation = await messagesCollection
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray()
 
     res.json({
-      messages: page.reverse(),
-      hasMore,
-      oldestCreatedAt: oldest?.createdAt || null,
+      messages: conversation.reverse(),
+      hasMore: conversation.length === limit,
+      oldestCreatedAt: conversation[0]?.createdAt || null,
     })
-  } catch {
+  } catch (error) {
+    console.error('Could not read message history:', error.message)
     res.status(500).json({ error: 'Could not read message history' })
   }
 })
 
-io.on('connection', async (socket) => {
-  const userId = socket.data.userId
-
+async function startServer() {
   try {
-    socket.join(userId)
+    await mongoClient.connect()
+    db = mongoClient.db(MONGODB_DB_NAME)
+    usersCollection = db.collection('users')
+    messagesCollection = db.collection('messages')
 
-    const count = (onlineConnections.get(userId) || 0) + 1
-    onlineConnections.set(userId, count)
+    await Promise.all([
+      usersCollection.createIndex({ id: 1 }, { unique: true }),
+      usersCollection.createIndex({ username: 1 }, { unique: true }),
+      messagesCollection.createIndex({ senderId: 1, receiverId: 1, createdAt: -1 }),
+      messagesCollection.createIndex({ receiverId: 1, senderId: 1, createdAt: -1 }),
+    ])
 
-    const publicUserData = await setUserStatus(userId, 'online')
+    await migrateLegacyUsers()
 
-    if (publicUserData) {
-      io.emit('user:status', { userId, status: 'online' })
-
-      const currentUsers = await readUsers()
-      for (const onlineUser of currentUsers) {
-        if (onlineUser.id !== userId && onlineUser.status === 'online') {
-          socket.emit('user:status', {
-            userId: onlineUser.id,
-            status: 'online',
-          })
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Could not mark user online:', error.message)
-  }
-
-  socket.on('private:message', async (payload, callback) => {
-    try {
-      const senderId = socket.data.userId
-      const receiverId = payload?.receiverId
-      const text = payload?.text?.trim()
-
-      if (!senderId || !receiverId || !text) {
-        return callback?.({ ok: false, error: 'Receiver and message text are required' })
-      }
-
-      if (text.length > 2000) {
-        return callback?.({ ok: false, error: 'Message is too long' })
-      }
-
-      const receiver = await getUserById(receiverId)
-
-      if (!receiver) {
-        return callback?.({ ok: false, error: 'Receiver not found' })
-      }
-
-      const messages = await readMessages()
-      const message = {
-        id: 'm' + Date.now() + Math.random().toString(36).slice(2, 8),
-        senderId,
-        receiverId,
-        text,
-        createdAt: new Date().toISOString(),
-      }
-
-      messages.push(message)
-      await writeMessages(messages)
-
-      io.to(senderId).emit('private:message', message)
-      io.to(receiverId).emit('private:message', message)
-
-      callback?.({ ok: true })
-    } catch (error) {
-      console.error('Could not send message:', error.message)
-      callback?.({ ok: false, error: 'Could not send message' })
-    }
-  })
-
-  socket.on('disconnect', async () => {
-    try {
-      const count = Math.max((onlineConnections.get(userId) || 1) - 1, 0)
-
-      if (count === 0) {
-        onlineConnections.delete(userId)
-        const publicUserData = await setUserStatus(userId, 'offline')
-
-        if (publicUserData) {
-          io.emit('user:status', { userId, status: 'offline' })
-        }
-      } else {
-        onlineConnections.set(userId, count)
-      }
-    } catch (error) {
-      console.error('Could not mark user offline:', error.message)
-    }
-  })
-})
-
-migratePlaintextPasswords()
-  .then(() => {
     httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`Chat backend running on port ${PORT}`)
+      console.log(`MongoDB database: ${MONGODB_DB_NAME}`)
     })
-  })
-  .catch((error) => {
-    console.error('Could not initialize user security:', error)
+  } catch (error) {
+    console.error('Could not initialize MongoDB:', error)
     process.exit(1)
-  })
+  }
+}
+
+startServer()
