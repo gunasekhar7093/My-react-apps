@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 const Icon = ({ name, size = 20 }) => {
   const paths = {
     arrow: <><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></>,
@@ -7,6 +9,19 @@ const Icon = ({ name, size = 20 }) => {
 }
 
 export default function ChatScreen({ user, selectedUser, messages, text, setText, notice, chatLoading, socketConnected, sendMessage, onBack }) {
+  const chatBodyRef = useRef(null)
+
+  useEffect(() => {
+    if (!chatBodyRef.current || chatLoading) return
+
+    requestAnimationFrame(() => {
+      const container = chatBodyRef.current
+      if (container) {
+        container.scrollTop = container.scrollHeight
+      }
+    })
+  }, [messages, chatLoading, selectedUser?.id])
+
   if (!selectedUser) {
     return (
       <main className="app-screen">
@@ -31,7 +46,7 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
         <div className={socketConnected ? 'connection-status online chat-connection' : 'connection-status chat-connection'}><i />{socketConnected ? 'Connected' : 'Connecting'}</div>
       </header>
 
-      <section className="chat-body">
+      <section className="chat-body" ref={chatBodyRef}>
         {notice && <div className="chat-notice">{notice}</div>}
         {chatLoading ? (
           <div className="empty-chat"><div className="chat-loading-dot" /><span>Loading conversation…</span></div>
