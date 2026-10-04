@@ -3,7 +3,7 @@ import cors from 'cors'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Server as SocketIOServer } from 'socket.io'
 
@@ -35,33 +35,42 @@ app.use(cors({ origin: FRONTEND_ORIGIN }))
 app.use(express.json())
 
 const onlineConnections = new Map()
-const sessions = new Map()
 
-function createSession(userId) {
-  const token = randomBytes(32).toString('hex')
-  sessions.set(token, {
-    userId,
-    expiresAt: Date.now() + SESSION_TTL_MS,
-  })
-  return token
+function base64Url(value) {
+  return Buffer.from(value).toString('base64url')
+}
+
+function createToken(userId) {
+  const payload = {
+    sub: userId,
+    exp: Math.floor((Date.now() + SESSION_TTL_MS) / 1000),
+  }
+  const encoded = base64Url(JSON.stringify(payload))
+  const signature = createHmac('sha256', SESSION_SECRET).update(encoded).digest('base64url')
+  return encoded + '.' + signature
 }
 
 function getSession(token) {
   if (!token) return null
 
-  const session = sessions.get(token)
-  if (!session) return null
+  const [encoded, signature] = token.split('.')
+  if (!encoded || !signature) return null
 
-  if (session.expiresAt <= Date.now()) {
-    sessions.delete(token)
+  const expected = createHmac('sha256', SESSION_SECRET).update(encoded).digest('base64url')
+  const a = Buffer.from(signature)
+  const b = Buffer.from(expected)
+
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null
+
+  try {
+    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
+    if (!payload?.sub || !Number.isInteger(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) {
+      return null
+    }
+    return { userId: payload.sub, expiresAt: payload.exp * 1000 }
+  } catch {
     return null
   }
-
-  return session
-}
-
-function revokeSession(token) {
-  if (token) sessions.delete(token)
 }
 
 function getBearerToken(req) {
@@ -71,8 +80,7 @@ function getBearerToken(req) {
 }
 
 function authenticateToken(token) {
-  const session = getSession(token)
-  return session?.userId || null
+  return getSession(token)?.userId || null
 }
 
 function requireAuth(req, res, next) {
@@ -84,18 +92,23 @@ function requireAuth(req, res, next) {
   }
 
   req.userId = userId
-  req.sessionToken = token
   next()
 }
 
-const sessionCleanup = setInterval(() => {
-  const now = Date.now()
-  for (const [token, session] of sessions) {
-    if (session.expiresAt <= now) sessions.delete(token)
-  }
-}, 60 * 60 * 1000)
+function hashPassword(password, salt = randomBytes(16).toString('hex')) {
+  const hash = scryptSync(password, salt, 64).toString('hex')
+  return { salt, hash }
+}
 
-sessionCleanup.unref?.()
+function verifyPassword(password, storedPassword, salt) {
+  try {
+    const derived = scryptSync(password, salt, 64)
+    const stored = Buffer.from(storedPassword, 'hex')
+    return stored.length === derived.length && timingSafeEqual(stored, derived)
+  } catch {
+    return false
+  }
+}
 
 async function readUsers() {
   const data = await fs.readFile(USERS_FILE, 'utf8')
@@ -124,7 +137,7 @@ async function writeMessages(messages) {
 }
 
 function publicUser(user) {
-  const { password, ...safeUser } = user
+  const { password, passwordHash, passwordSalt, ...safeUser } = user
   return safeUser
 }
 
@@ -226,15 +239,20 @@ app.post('/api/register', async (req, res) => {
       id: 'u' + Date.now(),
       name: name.trim(),
       username: normalizedUsername,
-      password,
+      passwordHash: null,
+      passwordSalt: null,
       phone: phone?.trim() || '',
       status: 'offline',
     }
 
+    const passwordData = hashPassword(password)
+    newUser.passwordHash = passwordData.hash
+    newUser.passwordSalt = passwordData.salt
+
     users.push(newUser)
     await writeUsers(users)
 
-    const token = createSession(newUser.id)
+    const token = createToken(newUser.id)
 
     res.status(201).json({
       message: 'Registration successful',
@@ -258,14 +276,27 @@ app.post('/api/login', async (req, res) => {
     const normalizedUsername = username.trim().toLowerCase()
     const user = users.find((item) => item.username.toLowerCase() === normalizedUsername)
 
-    if (!user || user.password !== password) {
+    const passwordValid = user
+      ? user.passwordHash && user.passwordSalt
+        ? verifyPassword(password, user.passwordHash, user.passwordSalt)
+        : user.password === password
+
+    if (!user || !passwordValid) {
       return res.status(401).json({ error: 'Invalid username/email or password' })
+    }
+
+    if (user.password) {
+      const passwordData = hashPassword(password)
+      user.passwordHash = passwordData.hash
+      user.passwordSalt = passwordData.salt
+      delete user.password
+      await writeUsers(users)
     }
 
     user.status = 'online'
     await writeUsers(users)
 
-    const token = createSession(user.id)
+    const token = createToken(user.id)
 
     res.json({
       message: 'Login successful',
