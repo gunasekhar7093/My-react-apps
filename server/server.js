@@ -246,10 +246,30 @@ app.get('/api/users', requireAuth, async (req, res) => {
       latestMessages.map((item) => [item._id, item.latestMessageAt]),
     )
 
+    const unreadMessages = await messagesCollection.aggregate([
+      {
+        $match: {
+          receiverId: req.userId,
+          readAt: { $exists: false },
+        },
+      },
+      {
+        $group: {
+          _id: '$senderId',
+          unreadCount: { $sum: 1 },
+        },
+      },
+    ]).toArray()
+
+    const unreadCount = new Map(
+      unreadMessages.map((item) => [item._id, item.unreadCount]),
+    )
+
     res.json(
       users.map((user) => ({
         ...publicUser(user),
         latestMessageAt: latestMessageAt.get(user.id) || null,
+        unreadCount: unreadCount.get(user.id) || 0,
       })),
     )
   } catch (error) {
@@ -362,6 +382,30 @@ app.post('/api/logout', requireAuth, async (req, res) => {
   }
 })
 
+app.post('/api/messages/:userId/:otherUserId/read', requireAuth, async (req, res) => {
+  try {
+    const { userId, otherUserId } = req.params
+
+    if (req.userId !== userId) {
+      return res.status(403).json({ error: 'You can only update your own conversations' })
+    }
+
+    await messagesCollection.updateMany(
+      {
+        senderId: otherUserId,
+        receiverId: userId,
+        readAt: { $exists: false },
+      },
+      { $set: { readAt: new Date().toISOString() } },
+    )
+
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Could not mark messages as read:', error.message)
+    res.status(500).json({ error: 'Could not mark messages as read' })
+  }
+})
+
 app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
   try {
     const { userId, otherUserId } = req.params
@@ -389,6 +433,17 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
       if (!Number.isNaN(beforeDate.getTime())) {
         filter.createdAt = { $lt: beforeDate.toISOString() }
       }
+    }
+
+    if (!before) {
+      await messagesCollection.updateMany(
+        {
+          senderId: otherUserId,
+          receiverId: userId,
+          readAt: { $exists: false },
+        },
+        { $set: { readAt: new Date().toISOString() } },
+      )
     }
 
     const conversation = await messagesCollection
@@ -505,6 +560,10 @@ async function startServer() {
     ])
 
     await migrateLegacyUsers()
+    await messagesCollection.updateMany(
+      { readAt: { $exists: false } },
+      { $set: { readAt: null } },
+    )
 
     httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`Chat backend running on port ${PORT}`)
