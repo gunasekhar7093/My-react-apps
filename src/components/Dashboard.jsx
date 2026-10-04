@@ -30,9 +30,17 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
   }, [showLogoutDialog])
 
   const query = search.trim().toLowerCase()
+  const sortedUsers = [...users].sort((a, b) => {
+    const aTime = a.latestMessageAt ? new Date(a.latestMessageAt).getTime() : 0
+    const bTime = b.latestMessageAt ? new Date(b.latestMessageAt).getTime() : 0
+
+    if (bTime !== aTime) return bTime - aTime
+    return a.name.localeCompare(b.name)
+  })
+
   const filteredUsers = query
-    ? users.filter((item) => item.name.toLowerCase().includes(query) || item.username.toLowerCase().includes(query))
-    : users
+    ? sortedUsers.filter((item) => item.name.toLowerCase().includes(query) || item.username.toLowerCase().includes(query))
+    : sortedUsers
 
   return (
     <main className="app-screen dashboard-screen">
