@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+
 const Icon = ({ name, size = 20 }) => {
   const paths = {
     search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
@@ -9,6 +11,24 @@ const Icon = ({ name, size = 20 }) => {
 }
 
 export default function Dashboard({ user, users, search, setSearch, onlineCount, openUser, socketConnected, onLogout }) {
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false)
+
+  useEffect(() => {
+    if (!showLogoutDialog) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setShowLogoutDialog(false)
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      document.body.style.overflow = ''
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [showLogoutDialog])
+
   const query = search.trim().toLowerCase()
   const filteredUsers = query
     ? users.filter((item) => item.name.toLowerCase().includes(query) || item.username.toLowerCase().includes(query))
@@ -27,7 +47,7 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
             <span className="user-avatar">{user.name?.charAt(0).toUpperCase()}</span>
             <span>{user.name}</span>
           </div>
-          <button className="header-button" onClick={onLogout}><Icon name="logout" size={17} /><span>Log out</span></button>
+          <button className="header-button" onClick={() => setShowLogoutDialog(true)}><Icon name="logout" size={17} /><span>Log out</span></button>
         </div>
       </header>
 
@@ -76,6 +96,50 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
           )}
         </div>
       </section>
+      {showLogoutDialog && (
+        <div
+          className="dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowLogoutDialog(false)
+          }}
+        >
+          <section
+            className="logout-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="logout-dialog-title"
+            aria-describedby="logout-dialog-description"
+          >
+            <div className="logout-dialog-icon">
+              <Icon name="logout" size={22} />
+            </div>
+            <h2 id="logout-dialog-title">Log out of ChatSpace?</h2>
+            <p id="logout-dialog-description">
+              You will be signed out of this account on this device.
+            </p>
+            <div className="logout-dialog-actions">
+              <button
+                type="button"
+                className="dialog-cancel"
+                onClick={() => setShowLogoutDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dialog-confirm"
+                onClick={() => {
+                  setShowLogoutDialog(false)
+                  onLogout()
+                }}
+              >
+                Log out
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
