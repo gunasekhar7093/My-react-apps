@@ -29,21 +29,21 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [chatLoading, setChatLoading] = useState(false)
   const [socketConnected, setSocketConnected] = useState(false)
-  const [token, setToken] = useState(() => sessionStorage.getItem('chatspace_token') || '')
+  const [token, setToken] = useState(() => localStorage.getItem('chatspace_token') || '')
 
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
 
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem('chatspace_user')
-      const savedToken = sessionStorage.getItem('chatspace_token')
+      const saved = localStorage.getItem('chatspace_user')
+      const savedToken = localStorage.getItem('chatspace_token')
       if (saved && savedToken) {
         const parsed = JSON.parse(saved)
         if (parsed?.id) setUser(parsed)
       }
     } catch {
-      sessionStorage.removeItem('chatspace_user')
+      localStorage.removeItem('chatspace_user')
     } finally {
       setSessionReady(true)
     }
@@ -60,8 +60,8 @@ function App() {
           setUser(data.user)
         })
         .catch(() => {
-          sessionStorage.removeItem('chatspace_user')
-          sessionStorage.removeItem('chatspace_token')
+          localStorage.removeItem('chatspace_user')
+          localStorage.removeItem('chatspace_token')
           setUser(null)
           setToken('')
         })
@@ -80,8 +80,8 @@ function App() {
     if (!sessionReady) return
 
     try {
-      if (user && token) sessionStorage.setItem('chatspace_user', JSON.stringify(user))
-      else sessionStorage.removeItem('chatspace_user')
+      if (user && token) localStorage.setItem('chatspace_user', JSON.stringify(user))
+      else localStorage.removeItem('chatspace_user')
     } catch {}
   }, [user, token, sessionReady])
 
@@ -232,7 +232,7 @@ function App() {
 
       setUser(data.user)
       setToken(data.token)
-      sessionStorage.setItem('chatspace_token', data.token)
+      localStorage.setItem('chatspace_token', data.token)
       navigate('/dashboard', { replace: true })
     } catch (error) {
       setNotice(error.message)
@@ -258,7 +258,7 @@ function App() {
 
       setUser(data.user)
       setToken(data.token)
-      sessionStorage.setItem('chatspace_token', data.token)
+      localStorage.setItem('chatspace_token', data.token)
       navigate('/dashboard', { replace: true })
     } catch (error) {
       setNotice(error.message)
@@ -301,8 +301,8 @@ function App() {
     } catch {}
 
     try {
-      sessionStorage.removeItem('chatspace_user')
-      sessionStorage.removeItem('chatspace_token')
+      localStorage.removeItem('chatspace_user')
+      localStorage.removeItem('chatspace_token')
     } catch {}
 
     socketRef.current?.disconnect()
