@@ -408,6 +408,94 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
   }
 })
 
+
+io.on('connection', async (socket) => {
+  const userId = socket.data.userId
+
+  let connections = onlineConnections.get(userId)
+  if (!connections) {
+    connections = new Set()
+    onlineConnections.set(userId, connections)
+  }
+  connections.add(socket.id)
+
+  try {
+    await usersCollection.updateOne({ id: userId }, { $set: { status: 'online' } })
+    socket.broadcast.emit('user:status', { userId, status: 'online' })
+  } catch (error) {
+    console.error('Could not update online status:', error.message)
+  }
+
+  socket.on('private:message', async (payload, acknowledge) => {
+    const done = typeof acknowledge === 'function' ? acknowledge : () => {}
+
+    try {
+      const receiverId = typeof payload?.receiverId === 'string' ? payload.receiverId.trim() : ''
+      const messageText = typeof payload?.text === 'string' ? payload.text.trim() : ''
+
+      if (!receiverId || !messageText) {
+        return done({ ok: false, error: 'Receiver and message text are required' })
+      }
+
+      if (messageText.length > 2000) {
+        return done({ ok: false, error: 'Message is too long' })
+      }
+
+      if (receiverId === userId) {
+        return done({ ok: false, error: 'You cannot message yourself' })
+      }
+
+      const receiver = await getUserById(receiverId)
+      if (!receiver) {
+        return done({ ok: false, error: 'Recipient not found' })
+      }
+
+      const message = {
+        id: 'm' + Date.now() + randomBytes(6).toString('hex'),
+        senderId: userId,
+        receiverId,
+        text: messageText,
+        createdAt: new Date().toISOString(),
+      }
+
+      await messagesCollection.insertOne(message)
+
+      const senderConnections = onlineConnections.get(userId)
+      senderConnections?.forEach((socketId) => {
+        io.to(socketId).emit('private:message', message)
+      })
+
+      const receiverConnections = onlineConnections.get(receiverId)
+      receiverConnections?.forEach((socketId) => {
+        io.to(socketId).emit('private:message', message)
+      })
+
+      done({ ok: true, message })
+    } catch (error) {
+      console.error('Could not send private message:', error.message)
+      done({ ok: false, error: 'Could not send message' })
+    }
+  })
+
+  socket.on('disconnect', async () => {
+    const userConnections = onlineConnections.get(userId)
+    if (!userConnections) return
+
+    userConnections.delete(socket.id)
+
+    if (userConnections.size === 0) {
+      onlineConnections.delete(userId)
+
+      try {
+        await usersCollection.updateOne({ id: userId }, { $set: { status: 'offline' } })
+        socket.broadcast.emit('user:status', { userId, status: 'offline' })
+      } catch (error) {
+        console.error('Could not update offline status:', error.message)
+      }
+    }
+  })
+})
+
 async function startServer() {
   try {
     await mongoClient.connect()
