@@ -62,7 +62,7 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
               <div key={item.id} className={item.senderId === user.id ? 'message-line mine' : 'message-line'}>
                 <div className="message">
                   <span>{item.text}</span>
-                  <small>{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
+                  <small>{new Date(item.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</small>
                 </div>
               </div>
             ))}
