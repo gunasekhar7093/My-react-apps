@@ -254,7 +254,10 @@ function App() {
 
         const data = await response.json()
 
-        if (!cancelled) setMessages(data.messages || [])
+        if (!cancelled) {
+          setMessages(data.messages || [])
+          setChatLoading(false)
+        }
       } catch {
         if (!cancelled) setMessages([])
       } finally {
