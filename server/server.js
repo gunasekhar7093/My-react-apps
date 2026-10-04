@@ -175,17 +175,35 @@ app.post('/api/logout', async (req, res) => {
 app.get('/api/messages/:userId/:otherUserId', async (req, res) => {
   try {
     const { userId, otherUserId } = req.params
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100)
+    const before = req.query.before
+
     const messages = await readMessages()
 
-    const conversation = messages
+    let conversation = messages
       .filter(
         (message) =>
           (message.senderId === userId && message.receiverId === otherUserId) ||
           (message.senderId === otherUserId && message.receiverId === userId),
       )
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 
-    res.json(conversation)
+    if (before) {
+      const beforeDate = new Date(before)
+      if (!Number.isNaN(beforeDate.getTime())) {
+        conversation = conversation.filter((message) => new Date(message.createdAt) < beforeDate)
+      }
+    }
+
+    const page = conversation.slice(0, limit)
+    const oldest = page.at(-1)
+    const hasMore = conversation.length > page.length
+
+    res.json({
+      messages: page.reverse(),
+      hasMore,
+      oldestCreatedAt: oldest?.createdAt || null,
+    })
   } catch {
     res.status(500).json({ error: 'Could not read message history' })
   }
