@@ -29,6 +29,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [chatLoading, setChatLoading] = useState(false)
   const [socketConnected, setSocketConnected] = useState(false)
+  const [token, setToken] = useState(() => sessionStorage.getItem('chatspace_token') || '')
 
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
@@ -36,7 +37,8 @@ function App() {
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem('chatspace_user')
-      if (saved) {
+      const savedToken = sessionStorage.getItem('chatspace_token')
+      if (saved && savedToken) {
         const parsed = JSON.parse(saved)
         if (parsed?.id) setUser(parsed)
       }
@@ -50,30 +52,49 @@ function App() {
   useEffect(() => {
     if (!sessionReady) return
 
+    if (token) {
+      fetch(API_URL + '/api/me', { headers: { Authorization: 'Bearer ' + token } })
+        .then(async (response) => {
+          if (!response.ok) throw new Error()
+          const data = await response.json()
+          setUser(data.user)
+        })
+        .catch(() => {
+          sessionStorage.removeItem('chatspace_user')
+          sessionStorage.removeItem('chatspace_token')
+          setUser(null)
+          setToken('')
+        })
+    } else {
+      setUser(null)
+    }
+
     const authRoute = location.pathname === '/login' || location.pathname === '/register'
 
     if (user && authRoute) {
       navigate('/dashboard', { replace: true })
     }
-  }, [sessionReady, user, location.pathname, navigate])
+  }, [sessionReady, token, location.pathname, navigate])
 
   useEffect(() => {
     if (!sessionReady) return
 
     try {
-      if (user) sessionStorage.setItem('chatspace_user', JSON.stringify(user))
+      if (user && token) sessionStorage.setItem('chatspace_user', JSON.stringify(user))
       else sessionStorage.removeItem('chatspace_user')
     } catch {}
-  }, [user, sessionReady])
+  }, [user, token, sessionReady])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !token) return
 
     let active = true
 
     async function loadUsersForSocket() {
       try {
-        const response = await fetch(API_URL + '/api/users')
+        const response = await fetch(API_URL + '/api/users', {
+          headers: { Authorization: 'Bearer ' + token },
+        })
         if (!response.ok) return
         const data = await response.json()
         if (active) setUsers(data.filter((item) => item.id !== user.id))
@@ -83,6 +104,7 @@ function App() {
     loadUsersForSocket()
 
     const socket = io(API_URL, {
+      auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -94,7 +116,6 @@ function App() {
     socket.on('connect', () => {
       setSocketConnected(true)
       setNotice('')
-      socket.emit('user:online', user.id)
       loadUsersForSocket()
     })
 
@@ -134,7 +155,7 @@ function App() {
       socketRef.current = null
       setSocketConnected(false)
     }
-  }, [user])
+  }, [user, token])
 
   const selectedUser = useMemo(() => {
     if (!chatMatch?.params.userId) return null
@@ -158,7 +179,8 @@ function App() {
 
       try {
         const response = await fetch(
-          API_URL + '/api/messages/' + user.id + '/' + selectedUser.id
+          API_URL + '/api/messages/' + user.id + '/' + selectedUser.id,
+          { headers: { Authorization: 'Bearer ' + token } }
         )
 
         if (!response.ok) throw new Error()
@@ -179,7 +201,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedUser?.id, user?.id])
+  }, [selectedUser?.id, user?.id, token])
 
   async function submitLogin(credentials) {
     setNotice('')
@@ -197,6 +219,8 @@ function App() {
       if (!response.ok) throw new Error(data.error || 'Sign in failed')
 
       setUser(data.user)
+      setToken(data.token)
+      sessionStorage.setItem('chatspace_token', data.token)
       navigate('/dashboard', { replace: true })
     } catch (error) {
       setNotice(error.message)
@@ -221,6 +245,8 @@ function App() {
       if (!response.ok) throw new Error(data.error || 'Registration failed')
 
       setUser(data.user)
+      setToken(data.token)
+      sessionStorage.setItem('chatspace_token', data.token)
       navigate('/dashboard', { replace: true })
     } catch (error) {
       setNotice(error.message)
@@ -250,13 +276,26 @@ function App() {
     )
   }
 
-  function logout() {
+  async function logout() {
+    const currentToken = token
+
+    try {
+      if (currentToken) {
+        await fetch(API_URL + '/api/logout', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + currentToken },
+        })
+      }
+    } catch {}
+
     try {
       sessionStorage.removeItem('chatspace_user')
+      sessionStorage.removeItem('chatspace_token')
     } catch {}
 
     socketRef.current?.disconnect()
 
+    setToken('')
     setUser(null)
     setUsers([])
     setMessages([])
