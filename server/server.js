@@ -198,7 +198,6 @@ app.get('/api/me', requireAuth, async (req, res) => {
     const user = await getUserById(req.userId)
 
     if (!user) {
-      revokeSession(req.sessionToken)
       return res.status(401).json({ error: 'Session is no longer valid' })
     }
 
