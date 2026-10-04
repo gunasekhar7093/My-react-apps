@@ -71,7 +71,7 @@ export default function ChatScreen({ user, selectedUser, messages, text, setText
       </section>
 
       <form className="message-box" onSubmit={sendMessage}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={socketConnected ? 'Write a message…' : 'Connecting…'} disabled={!socketConnected} autoComplete="off" />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…" disabled={!socketConnected} autoComplete="off" />
         <button type="submit" aria-label="Send message" disabled={!socketConnected || !text.trim()}><Icon name="send" size={19} /><span>Send</span></button>
       </form>
     </main>
