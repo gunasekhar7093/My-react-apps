@@ -35,6 +35,7 @@ function App() {
 
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
+  const conversationRequestRef = useRef(0)
 
   useEffect(() => {
     try {
@@ -280,11 +281,13 @@ function App() {
       return
     }
 
+    const requestId = ++conversationRequestRef.current
     let cancelled = false
-    const cachedMessages = conversationCache[selectedUser.id]
+    const conversationId = selectedUser.id
+    const cachedMessages = conversationCache[conversationId]
 
-    // Show cached messages immediately when this conversation was already opened.
-    // Only show the loading state when there is genuinely no cached conversation.
+    // Show only this conversation's cache immediately. Older requests are not
+    // allowed to overwrite the currently selected conversation.
     setMessages(cachedMessages || [])
     setChatLoading(!cachedMessages)
     setText('')
@@ -292,7 +295,7 @@ function App() {
     async function loadMessages() {
       try {
         const response = await fetch(
-          API_URL + '/api/messages/' + user.id + '/' + selectedUser.id,
+          API_URL + '/api/messages/' + user.id + '/' + conversationId,
           { headers: { Authorization: 'Bearer ' + token } }
         )
 
@@ -300,17 +303,19 @@ function App() {
 
         const data = await response.json()
 
-        if (!cancelled) {
+        if (!cancelled && requestId === conversationRequestRef.current) {
           const freshMessages = data.messages || []
           setMessages(freshMessages)
           setConversationCache((current) => ({
             ...current,
-            [selectedUser.id]: freshMessages,
+            [conversationId]: freshMessages,
           }))
           setChatLoading(false)
         }
       } catch {
-        if (!cancelled) setChatLoading(false)
+        if (!cancelled && requestId === conversationRequestRef.current) {
+          setChatLoading(false)
+        }
       }
     }
 
