@@ -50,6 +50,7 @@ function App() {
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const sessionRestoredRef = useRef(false)
+  const preserveScrollRef = useRef(false)
 
   useEffect(() => {
     selectedUserRef.current = selectedUser
@@ -159,6 +160,10 @@ function App() {
   }, [selectedUser, user])
 
   useEffect(() => {
+    if (preserveScrollRef.current) {
+      preserveScrollRef.current = false
+      return
+    }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
@@ -233,6 +238,7 @@ function App() {
       const older = data.messages || []
 
       if (older.length) {
+        preserveScrollRef.current = true
         setMessages((current) => [...older, ...current])
         setHasMoreMessages(Boolean(data.hasMore))
         requestAnimationFrame(() => {
@@ -270,6 +276,8 @@ function App() {
   }
 
   async function logout() {
+    try { sessionStorage.removeItem('chatspace_user') } catch {}
+    sessionRestoredRef.current = false
     socketRef.current?.disconnect()
     try {
       await fetch(API_URL + '/api/logout', {
