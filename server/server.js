@@ -560,7 +560,6 @@ async function startServer() {
     ])
 
     await migrateLegacyUsers()
-    )
 
     httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`Chat backend running on port ${PORT}`)
