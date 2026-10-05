@@ -27,3 +27,15 @@ class DashboardUserStatusChanged extends DashboardEvent {
     this.lastSeenAt,
   });
 }
+
+class DashboardPrivateMessageReceived extends DashboardEvent {
+  final String senderId;
+  final String receiverId;
+  final String createdAt;
+
+  const DashboardPrivateMessageReceived({
+    required this.senderId,
+    required this.receiverId,
+    required this.createdAt,
+  });
+}
