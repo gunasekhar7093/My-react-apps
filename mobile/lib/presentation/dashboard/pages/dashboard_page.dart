@@ -17,7 +17,7 @@ class DashboardPage extends StatelessWidget {
           IconButton(tooltip: 'Log out', onPressed: () => context.read<AuthBloc>().add(const LogoutRequested()), icon: const Icon(Icons.logout)),
         ],
       ),
-      body: Center(child: Text('Welcome, ' + (user?.name ?? ''), style: Theme.of(context).textTheme.headlineSmall)),
+      body: Center(child: Text('Welcome, ${user?.name ?? ''}', style: Theme.of(context).textTheme.headlineSmall)),
     );
   }
 }
