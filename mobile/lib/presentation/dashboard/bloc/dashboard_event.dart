@@ -1,3 +1,5 @@
+import '../../../data/models/user_model.dart';
+
 abstract class DashboardEvent {
   const DashboardEvent();
 }
@@ -40,4 +42,10 @@ class DashboardPrivateMessageReceived extends DashboardEvent {
     required this.createdAt,
     required this.isIncoming,
   });
+}
+
+class DashboardUnreadCountReconciled extends DashboardEvent {
+  final UserModel user;
+
+  const DashboardUnreadCountReconciled(this.user);
 }
