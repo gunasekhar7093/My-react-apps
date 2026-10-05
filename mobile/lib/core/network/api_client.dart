@@ -25,7 +25,7 @@ class ApiClient {
       headers: await _headers(authenticated),
       body: jsonEncode(body ?? {}),
     );
-    return _decode(response);
+    return _decodeMap(response);
   }
 
   Future<Map<String, dynamic>> get(String path, {bool authenticated = false}) async {
@@ -48,7 +48,7 @@ class ApiClient {
     final headers = <String, String>{'Content-Type': 'application/json', 'Accept': 'application/json'};
     if (authenticated) {
       final token = await storage.getToken();
-      if (token != null && token.isNotEmpty) headers['Authorization'] = 'Bearer ' + token;
+      if (token != null && token.isNotEmpty) headers['Authorization'] = 'Bearer $token';
     }
     return headers;
   }
