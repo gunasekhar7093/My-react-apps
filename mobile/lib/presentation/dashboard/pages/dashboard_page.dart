@@ -9,6 +9,7 @@ import '../../auth/bloc/auth_event.dart';
 import '../bloc/dashboard_bloc.dart';
 import '../bloc/dashboard_event.dart';
 import '../bloc/dashboard_state.dart';
+import '../../chat/pages/chat_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -56,7 +57,7 @@ class _DashboardPageState extends State<DashboardPage> {
           if (state.status == DashboardStatus.loading && state.users.isEmpty) const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
           else if (state.status == DashboardStatus.failure && state.users.isEmpty) SliverFillRemaining(child: Center(child: FilledButton.icon(onPressed: () => context.read<DashboardBloc>().add(const DashboardUsersRefreshRequested(showLoading: true)), icon: const Icon(Icons.refresh), label: const Text('Try again'))))
           else if (state.filteredUsers.isEmpty) const SliverFillRemaining(child: Center(child: Text('No people found')))
-          else SliverPadding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), sliver: SliverList.builder(itemCount: state.filteredUsers.length, itemBuilder: (context, i) => Padding(padding: const EdgeInsets.only(bottom: 10), child: _UserCard(user: state.filteredUsers[i])))),
+          else SliverPadding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), sliver: SliverList.builder(itemCount: state.filteredUsers.length, itemBuilder: (context, i) => Padding(padding: const EdgeInsets.only(bottom: 10), child: _UserCard(user: state.filteredUsers[i], currentUserId: me?.id)))),
         ]),
       )),
     ));
@@ -64,14 +65,15 @@ class _DashboardPageState extends State<DashboardPage> {
 }
 
 class _UserCard extends StatelessWidget {
-  final UserModel user; const _UserCard({required this.user});
+  final String? currentUserId;
+  final UserModel user; const _UserCard({required this.user, this.currentUserId});
   @override Widget build(BuildContext context) {
     final theme = Theme.of(context); final online = user.status == 'online';
     final initial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
     return Card(child: ListTile(leading: Stack(children: [CircleAvatar(radius: 26, child: Text(initial)), Positioned(right: 0, bottom: 0, child: Container(width: 13, height: 13, decoration: BoxDecoration(color: online ? Colors.green : theme.colorScheme.outlineVariant, shape: BoxShape.circle, border: Border.all(color: theme.colorScheme.surface, width: 2))))]),
       title: Row(children: [Expanded(child: Text(user.name, maxLines: 1, overflow: TextOverflow.ellipsis)), if (user.unreadCount > 0) Padding(padding: const EdgeInsets.only(left: 8), child: Badge(label: Text(user.unreadCount > 99 ? '99+' : '${user.unreadCount}')))]),
       subtitle: Text(online ? 'Online now' : _lastSeen(user.lastSeenAt)), trailing: const Icon(Icons.chevron_right_rounded),
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chat screen is coming next.')))));
+      onTap: currentUserId == null ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatPage(user: user, currentUserId: currentUserId!)))));
   }
   static String _lastSeen(String? value) {
     if (value == null || value.isEmpty) return 'Last seen recently'; final d = DateTime.tryParse(value)?.toLocal(); if (d == null) return 'Last seen recently';
