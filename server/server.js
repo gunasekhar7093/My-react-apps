@@ -8,10 +8,25 @@ import { MongoClient } from 'mongodb'
 const app = express()
 const httpServer = http.createServer(app)
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*'
+const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN || '*')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+
+function isAllowedOrigin(origin) {
+  return !origin || FRONTEND_ORIGINS.includes('*') || FRONTEND_ORIGINS.includes(origin)
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) return callback(null, true)
+    return callback(new Error('Origin is not allowed by CORS'))
+  },
+}
+
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: FRONTEND_ORIGIN,
+    ...corsOptions,
     methods: ['GET', 'POST'],
   },
 })
@@ -36,7 +51,7 @@ let db
 let usersCollection
 let messagesCollection
 
-app.use(cors({ origin: FRONTEND_ORIGIN }))
+app.use(cors(corsOptions))
 app.use(express.json())
 
 const onlineConnections = new Map()
