@@ -78,7 +78,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           a[i].status != b[i].status ||
           a[i].lastSeenAt != b[i].lastSeenAt ||
           a[i].latestMessageAt != b[i].latestMessageAt ||
-          a[i].unreadCount != b[i].unreadCount) return false;
+          a[i].unreadCount != b[i].unreadCount) {
+        return false;
+      }
     }
     return true;
   }
