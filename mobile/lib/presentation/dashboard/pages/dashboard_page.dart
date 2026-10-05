@@ -39,7 +39,15 @@ class _DashboardPageState extends State<DashboardPage> {
         final senderId = message['senderId']?.toString();
         final receiverId = message['receiverId']?.toString();
         final createdAt = message['createdAt']?.toString();
-        if (!mounted || senderId == null || receiverId == null || createdAt == null) return;
+        final currentUserId = context.read<AuthBloc>().state.user?.id;
+        if (!mounted ||
+            senderId == null ||
+            receiverId == null ||
+            createdAt == null ||
+            currentUserId == null) {
+          return;
+        }
+
         _bloc.add(DashboardPrivateMessageReceived(
           senderId: senderId,
           receiverId: receiverId,
