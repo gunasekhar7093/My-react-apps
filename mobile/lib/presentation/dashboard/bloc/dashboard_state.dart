@@ -1,9 +1,8 @@
-import 'package:equatable/equatable.dart';
 import '../../../data/models/user_model.dart';
 
 enum DashboardStatus { initial, loading, ready, failure }
 
-class DashboardState extends Equatable {
+class DashboardState {
   final DashboardStatus status;
   final List<UserModel> users;
   final String searchQuery;
@@ -20,8 +19,8 @@ class DashboardState extends Equatable {
     final query = searchQuery.trim().toLowerCase();
     final sorted = [...users]
       ..sort((a, b) {
-        final aTime = a.lastSeenAt == null ? 0 : DateTime.tryParse(a.lastSeenAt!)?.millisecondsSinceEpoch ?? 0;
-        final bTime = b.lastSeenAt == null ? 0 : DateTime.tryParse(b.lastSeenAt!)?.millisecondsSinceEpoch ?? 0;
+        final aTime = a.latestMessageAt == null ? 0 : DateTime.tryParse(a.latestMessageAt!)?.millisecondsSinceEpoch ?? 0;
+        final bTime = b.latestMessageAt == null ? 0 : DateTime.tryParse(b.latestMessageAt!)?.millisecondsSinceEpoch ?? 0;
         if (bTime != aTime) return bTime.compareTo(aTime);
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
@@ -48,7 +47,4 @@ class DashboardState extends Equatable {
       errorMessage: errorMessage,
     );
   }
-
-  @override
-  List<Object?> get props => [status, users, searchQuery, errorMessage];
 }
