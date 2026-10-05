@@ -14,6 +14,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardUsersRefreshRequested>(_onRefresh);
     on<DashboardSearchChanged>(_onSearchChanged);
     on<DashboardUserStatusChanged>(_onStatusChanged);
+    on<DashboardPrivateMessageReceived>(_onPrivateMessageReceived);
   }
 
   Future<void> _onStarted(DashboardStarted event, Emitter<DashboardState> emit) async {
@@ -66,6 +67,43 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         unreadCount: user.unreadCount,
       );
     }).toList();
+    emit(state.copyWith(users: users));
+  }
+
+  void _onPrivateMessageReceived(
+    DashboardPrivateMessageReceived event,
+    Emitter<DashboardState> emit,
+  ) {
+    final users = state.users.map((user) {
+      if (user.id == event.senderId) {
+        return UserModel(
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          phone: user.phone,
+          status: user.status,
+          lastSeenAt: user.lastSeenAt,
+          latestMessageAt: event.createdAt,
+          unreadCount: user.unreadCount + 1,
+        );
+      }
+
+      if (user.id == event.receiverId) {
+        return UserModel(
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          phone: user.phone,
+          status: user.status,
+          lastSeenAt: user.lastSeenAt,
+          latestMessageAt: event.createdAt,
+          unreadCount: user.unreadCount,
+        );
+      }
+
+      return user;
+    }).toList();
+
     emit(state.copyWith(users: users));
   }
 
