@@ -58,8 +58,6 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     final pending = List<DashboardPrivateMessageReceived>.from(_pendingMessages);
     _pendingMessages.clear();
 
-    // The REST response may already include some or all pending messages.
-    // Reconcile using the server count instead of blindly adding +1.
     final incomingBySender = <String, int>{};
     for (final event in pending) {
       if (event.isIncoming) {
@@ -74,13 +72,6 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       final pendingCount = incomingBySender[user.id] ?? 0;
       if (pendingCount == 0) return user;
 
-      // If the server response already contains the pending messages,
-      // keep its authoritative count. Otherwise, add the missed events.
-      final currentCount = user.unreadCount;
-      final reconciledCount = currentCount < pendingCount
-          ? currentCount + pendingCount
-          : currentCount;
-
       return UserModel(
         id: user.id,
         name: user.name,
@@ -89,7 +80,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         status: user.status,
         lastSeenAt: user.lastSeenAt,
         latestMessageAt: user.latestMessageAt,
-        unreadCount: reconciledCount,
+        unreadCount: user.unreadCount + pendingCount,
       );
     }).toList();
 
@@ -121,8 +112,6 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     DashboardPrivateMessageReceived event,
     Emitter<DashboardState> emit,
   ) {
-    // Socket.IO can deliver a message before the initial /api/users request
-    // has completed. Keep it so the first unread badge is not lost.
     if (state.users.isEmpty) {
       _pendingMessages.add(event);
       return;
@@ -138,7 +127,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           status: user.status,
           lastSeenAt: user.lastSeenAt,
           latestMessageAt: event.createdAt,
-          unreadCount: event.isIncoming ? user.unreadCount + 1 : user.unreadCount,
+          unreadCount: event.isIncoming
+              ? user.unreadCount + 1
+              : user.unreadCount,
         );
       }
 
@@ -159,6 +150,44 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }).toList();
 
     emit(state.copyWith(users: users));
+    if (event.isIncoming) {
+      _reconcileUnreadCount(event.senderId);
+    }
+  }
+
+  Future<void> _reconcileUnreadCount(String senderId) async {
+    try {
+      final latestUsers = await repository.getUsers();
+      final serverUser = latestUsers.cast<UserModel?>().firstWhere(
+        (user) => user?.id == senderId,
+        orElse: () => null,
+      );
+      if (serverUser == null || isClosed) return;
+
+      final currentUser = state.users.cast<UserModel?>().firstWhere(
+        (user) => user?.id == senderId,
+        orElse: () => null,
+      );
+      if (currentUser == null) return;
+
+      final users = state.users.map((user) {
+        if (user.id != senderId) return user;
+        return UserModel(
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          phone: user.phone,
+          status: serverUser.status,
+          lastSeenAt: serverUser.lastSeenAt,
+          latestMessageAt: serverUser.latestMessageAt ?? user.latestMessageAt,
+          unreadCount: serverUser.unreadCount,
+        );
+      }).toList();
+
+      emit(state.copyWith(users: users));
+    } catch (_) {
+      // The local +1 update already gives immediate feedback.
+    }
   }
 
   bool _sameUsers(List a, List b) {
