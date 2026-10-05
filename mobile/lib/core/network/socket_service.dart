@@ -11,6 +11,8 @@ typedef UserStatusCallback = void Function({
   String? lastSeenAt,
 });
 typedef MessageCallback = void Function(Map<String, dynamic> message);
+typedef SocketConnectionCallback = void Function();
+typedef SocketErrorCallback = void Function(String message);
 
 class SocketService {
   final SecureStorageService storage;
@@ -19,25 +21,50 @@ class SocketService {
   SocketService({SecureStorageService? storage})
       : storage = storage ?? SecureStorageService();
 
+  bool get isConnected => _socket?.connected == true;
+
   Future<void> connect({
     required UserStatusCallback onUserStatus,
     MessageCallback? onMessage,
+    SocketConnectionCallback? onConnected,
+    SocketErrorCallback? onError,
   }) async {
     if (_socket?.connected == true) return;
-    final token = await storage.getToken();
-    if (token == null || token.isEmpty) return;
 
+    final token = await storage.getToken();
+    if (token == null || token.isEmpty) {
+      onError?.call('No authentication token is available.');
+      return;
+    }
+
+    _socket?.dispose();
     _socket = io.io(
       ApiConstants.baseUrl,
       io.OptionBuilder()
-          .setTransports(['websocket'])
+          // WebSocket is preferred, but polling fallback is important for
+          // Flutter Web running through a Codespaces/tunnel proxy.
+          .setTransports(['websocket', 'polling'])
           .setAuth({'token': token})
           .disableAutoConnect()
           .enableReconnection()
+          .setReconnectionAttempts(10)
+          .setReconnectionDelay(1000)
+          .setReconnectionDelayMax(5000)
           .build(),
     );
 
-    _socket!
+    final socket = _socket!;
+    socket
+      ..onConnect((_) {
+        onConnected?.call();
+      })
+      ..onConnectError((data) {
+        onError?.call(data?.toString() ?? 'Socket connection failed.');
+      })
+      ..onError((data) {
+        onError?.call(data?.toString() ?? 'Socket error.');
+      })
+      ..onDisconnect((_) {})
       ..on('user:status', (data) {
         if (data is! Map) return;
         final userId = data['userId']?.toString();
