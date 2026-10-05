@@ -1,10 +1,5 @@
-import 'package:equatable/equatable.dart';
-
-abstract class DashboardEvent extends Equatable {
+abstract class DashboardEvent {
   const DashboardEvent();
-
-  @override
-  List<Object?> get props => [];
 }
 
 class DashboardStarted extends DashboardEvent {
@@ -13,20 +8,12 @@ class DashboardStarted extends DashboardEvent {
 
 class DashboardUsersRefreshRequested extends DashboardEvent {
   final bool showLoading;
-
   const DashboardUsersRefreshRequested({this.showLoading = false});
-
-  @override
-  List<Object?> get props => [showLoading];
 }
 
 class DashboardSearchChanged extends DashboardEvent {
   final String query;
-
   const DashboardSearchChanged(this.query);
-
-  @override
-  List<Object?> get props => [query];
 }
 
 class DashboardUserStatusChanged extends DashboardEvent {
@@ -39,7 +26,4 @@ class DashboardUserStatusChanged extends DashboardEvent {
     required this.status,
     this.lastSeenAt,
   });
-
-  @override
-  List<Object?> get props => [userId, status, lastSeenAt];
 }
