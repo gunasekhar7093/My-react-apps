@@ -32,10 +32,12 @@ class DashboardPrivateMessageReceived extends DashboardEvent {
   final String senderId;
   final String receiverId;
   final String createdAt;
+  final bool isIncoming;
 
   const DashboardPrivateMessageReceived({
     required this.senderId,
     required this.receiverId,
     required this.createdAt,
+    required this.isIncoming,
   });
 }
