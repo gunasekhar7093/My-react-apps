@@ -16,6 +16,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardSearchChanged>(_onSearchChanged);
     on<DashboardUserStatusChanged>(_onStatusChanged);
     on<DashboardPrivateMessageReceived>(_onPrivateMessageReceived);
+    on<DashboardUnreadCountReconciled>(_onUnreadCountReconciled);
   }
 
   Future<void> _onStarted(DashboardStarted event, Emitter<DashboardState> emit) async {
@@ -184,10 +185,34 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         );
       }).toList();
 
-      emit(state.copyWith(users: users));
+      add(DashboardUnreadCountReconciled(serverUser));
     } catch (_) {
       // The local +1 update already gives immediate feedback.
     }
+  }
+
+  void _onUnreadCountReconciled(
+    DashboardUnreadCountReconciled event,
+    Emitter<DashboardState> emit,
+  ) {
+    if (isClosed) return;
+
+    final users = state.users.map((user) {
+      if (user.id != event.user.id) return user;
+
+      return UserModel(
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        phone: user.phone,
+        status: event.user.status,
+        lastSeenAt: event.user.lastSeenAt,
+        latestMessageAt: event.user.latestMessageAt ?? user.latestMessageAt,
+        unreadCount: event.user.unreadCount,
+      );
+    }).toList();
+
+    emit(state.copyWith(users: users));
   }
 
   bool _sameUsers(List a, List b) {
