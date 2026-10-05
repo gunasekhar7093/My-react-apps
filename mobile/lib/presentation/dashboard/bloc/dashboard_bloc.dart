@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../data/repositories/user_repository.dart';
 import 'dashboard_event.dart';
 import 'dashboard_state.dart';
+import '../../../data/models/user_model.dart';
 
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final UserRepository repository;
@@ -61,6 +62,8 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         phone: user.phone,
         status: event.status,
         lastSeenAt: event.lastSeenAt ?? user.lastSeenAt,
+        latestMessageAt: user.latestMessageAt,
+        unreadCount: user.unreadCount,
       );
     }).toList();
     emit(state.copyWith(users: users));
@@ -73,7 +76,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           a[i].name != b[i].name ||
           a[i].username != b[i].username ||
           a[i].status != b[i].status ||
-          a[i].lastSeenAt != b[i].lastSeenAt) return false;
+          a[i].lastSeenAt != b[i].lastSeenAt ||
+          a[i].latestMessageAt != b[i].latestMessageAt ||
+          a[i].unreadCount != b[i].unreadCount) return false;
     }
     return true;
   }
