@@ -171,20 +171,6 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       );
       if (currentUser == null) return;
 
-      final users = state.users.map((user) {
-        if (user.id != senderId) return user;
-        return UserModel(
-          id: user.id,
-          name: user.name,
-          username: user.username,
-          phone: user.phone,
-          status: serverUser.status,
-          lastSeenAt: serverUser.lastSeenAt,
-          latestMessageAt: serverUser.latestMessageAt ?? user.latestMessageAt,
-          unreadCount: serverUser.unreadCount,
-        );
-      }).toList();
-
       add(DashboardUnreadCountReconciled(serverUser));
     } catch (_) {
       // The local +1 update already gives immediate feedback.
