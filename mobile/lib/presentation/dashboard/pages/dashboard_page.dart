@@ -52,6 +52,7 @@ class _DashboardPageState extends State<DashboardPage> {
           senderId: senderId,
           receiverId: receiverId,
           createdAt: createdAt,
+          isIncoming: receiverId == currentUserId,
         ));
       },
     );
