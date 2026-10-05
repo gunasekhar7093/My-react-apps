@@ -21,7 +21,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> post(String path, {Map<String, dynamic>? body, bool authenticated = false}) async {
     final response = await _client.post(
-      Uri.parse('https://my-react-apps-aet5.onrender.com' + path),
+      Uri.parse(ApiConstants.baseUrl + path),
       headers: await _headers(authenticated),
       body: jsonEncode(body ?? {}),
     );
@@ -30,10 +30,18 @@ class ApiClient {
 
   Future<Map<String, dynamic>> get(String path, {bool authenticated = false}) async {
     final response = await _client.get(
-      Uri.parse('https://my-react-apps-aet5.onrender.com' + path),
+      Uri.parse(ApiConstants.baseUrl + path),
       headers: await _headers(authenticated),
     );
-    return _decode(response);
+    return _decodeMap(response);
+  }
+
+  Future<List<dynamic>> getList(String path, {bool authenticated = false}) async {
+    final response = await _client.get(
+      Uri.parse(ApiConstants.baseUrl + path),
+      headers: await _headers(authenticated),
+    );
+    return _decodeList(response);
   }
 
   Future<Map<String, String>> _headers(bool authenticated) async {
@@ -45,7 +53,7 @@ class ApiClient {
     return headers;
   }
 
-  Map<String, dynamic> _decode(http.Response response) {
+  Map<String, dynamic> _decodeMap(http.Response response) {
     Map<String, dynamic> data = {};
     if (response.body.isNotEmpty) {
       final decoded = jsonDecode(response.body);
@@ -55,5 +63,20 @@ class ApiClient {
       throw ApiException(response.statusCode, data['error']?.toString() ?? 'Something went wrong. Please try again.');
     }
     return data;
+  }
+
+  List<dynamic> _decodeList(http.Response response) {
+    dynamic decoded;
+    if (response.body.isNotEmpty) decoded = jsonDecode(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final message = decoded is Map<String, dynamic>
+          ? decoded['error']?.toString() ?? 'Something went wrong. Please try again.'
+          : 'Something went wrong. Please try again.';
+      throw ApiException(response.statusCode, message);
+    }
+    if (decoded is! List<dynamic>) {
+      throw const ApiException(500, 'The server returned an invalid list response.');
+    }
+    return decoded;
   }
 }
