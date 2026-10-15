@@ -21,7 +21,7 @@ class UserModel {
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
     return UserModel(
-      id: json['id']?.toString() ?? '',
+      id: json['id']?.toString() ?? json['_id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       username: json['username']?.toString() ?? '',
       phone: json['phone']?.toString() ?? '',
@@ -30,5 +30,18 @@ class UserModel {
       latestMessageAt: json['latestMessageAt']?.toString(),
       unreadCount: int.tryParse(json['unreadCount']?.toString() ?? '') ?? 0,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'username': username,
+      'phone': phone,
+      'status': status,
+      'lastSeenAt': lastSeenAt,
+      'latestMessageAt': latestMessageAt,
+      'unreadCount': unreadCount,
+    };
   }
 }

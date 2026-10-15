@@ -19,12 +19,14 @@ class ApiClient {
       : storage = storage ?? SecureStorageService(),
         _client = client ?? http.Client();
 
+  static const Duration _timeout = Duration(seconds: 25);
+
   Future<Map<String, dynamic>> post(String path, {Map<String, dynamic>? body, bool authenticated = false}) async {
     final response = await _client.post(
       Uri.parse(ApiConstants.baseUrl + path),
       headers: await _headers(authenticated),
       body: jsonEncode(body ?? {}),
-    );
+    ).timeout(_timeout);
     return _decodeMap(response);
   }
 
@@ -32,7 +34,7 @@ class ApiClient {
     final response = await _client.get(
       Uri.parse(ApiConstants.baseUrl + path),
       headers: await _headers(authenticated),
-    );
+    ).timeout(_timeout);
     return _decodeMap(response);
   }
 
@@ -40,7 +42,7 @@ class ApiClient {
     final response = await _client.get(
       Uri.parse(ApiConstants.baseUrl + path),
       headers: await _headers(authenticated),
-    );
+    ).timeout(_timeout);
     return _decodeList(response);
   }
 

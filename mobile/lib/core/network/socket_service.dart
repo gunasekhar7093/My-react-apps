@@ -47,7 +47,6 @@ class SocketService {
           .setAuth({'token': token})
           .disableAutoConnect()
           .enableReconnection()
-          .setReconnectionAttempts(10)
           .setReconnectionDelay(1000)
           .setReconnectionDelayMax(5000)
           .build(),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'core/theme/app_theme.dart';
 import 'data/repositories/auth_repository.dart';
 import 'presentation/auth/bloc/auth_bloc.dart';
 import 'presentation/auth/bloc/auth_event.dart';
@@ -23,14 +24,9 @@ class ChatSpaceApp extends StatelessWidget {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'ChatSpace',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4)),
-          useMaterial3: true,
-          inputDecorationTheme: const InputDecorationTheme(
-            filled: true,
-            border: OutlineInputBorder(),
-          ),
-        ),
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: ThemeMode.system,
         home: const _AuthGate(),
       ),
     );
@@ -53,14 +49,71 @@ class _AuthGateState extends State<_AuthGate> {
           case AuthStatus.initial:
           case AuthStatus.checkingSession:
           case AuthStatus.authenticating:
-            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+            return Scaffold(
+              body: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppTheme.primaryColor, AppTheme.accentColor],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.3),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 36),
+                    ),
+                    const SizedBox(height: 24),
+                    const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                  ],
+                ),
+              ),
+            );
           case AuthStatus.authenticated:
             return const DashboardPage();
           case AuthStatus.unauthenticated:
           case AuthStatus.failure:
-            return showRegister
-                ? RegisterPage(onLogin: () => setState(() => showRegister = false))
-                : LoginPage(onRegister: () => setState(() => showRegister = true));
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.04, 0),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
+                );
+              },
+              child: showRegister
+                  ? RegisterPage(
+                      key: const ValueKey('register'),
+                      onLogin: () => setState(() => showRegister = false),
+                    )
+                  : LoginPage(
+                      key: const ValueKey('login'),
+                      onRegister: () => setState(() => showRegister = true),
+                    ),
+            );
         }
       },
     );
