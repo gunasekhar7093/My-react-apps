@@ -412,6 +412,50 @@ function App() {
     )
   }
 
+  async function sendMedia({ file, caption }) {
+    if (!file || !selectedUser || !socketRef.current?.connected) return
+
+    setNotice('Uploading media to MongoDB…')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch(API_URL + '/api/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+        },
+        body: formData,
+      })
+
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to upload media')
+
+      socketRef.current.emit(
+        'private:message',
+        {
+          receiverId: selectedUser.id,
+          text: (caption || '').trim(),
+          mediaUrl: data.mediaUrl,
+          mediaType: data.mediaType,
+          mediaName: data.mediaName,
+          mediaSize: data.mediaSize,
+        },
+        (result) => {
+          if (!result?.ok) {
+            setNotice(result?.error || 'Could not send message')
+          } else {
+            setText('')
+            setNotice('')
+          }
+        }
+      )
+    } catch (err) {
+      setNotice(err.message || 'Media upload failed')
+      throw err
+    }
+  }
+
   async function logout() {
     const currentToken = token
 
@@ -528,6 +572,8 @@ function App() {
               chatLoading={chatLoading}
               socketConnected={socketConnected}
               sendMessage={sendMessage}
+              sendMedia={sendMedia}
+              apiUrl={API_URL}
               onBack={() => navigate('/dashboard')}
             />
           </ProtectedRoute>

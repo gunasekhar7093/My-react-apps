@@ -63,10 +63,18 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Emitter<ChatState> emit,
   ) async {
     final text = event.text.trim();
-    if (text.isEmpty || state.sending) return;
+    if (text.isEmpty && (event.mediaUrl == null || event.mediaUrl!.isEmpty)) return;
+    if (state.sending) return;
     emit(state.copyWith(sending: true, clearError: true));
     try {
-      await socket.sendMessage(receiverId: otherUserId, text: text);
+      await socket.sendMessage(
+        receiverId: otherUserId,
+        text: text,
+        mediaUrl: event.mediaUrl,
+        mediaType: event.mediaType,
+        mediaName: event.mediaName,
+        mediaSize: event.mediaSize,
+      );
     } catch (error) {
       emit(state.copyWith(errorMessage: error.toString()));
     } finally {

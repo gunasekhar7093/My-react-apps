@@ -3,7 +3,8 @@ import cors from 'cors'
 import http from 'node:http'
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
 import { Server as SocketIOServer } from 'socket.io'
-import { MongoClient } from 'mongodb'
+import { MongoClient, GridFSBucket, ObjectId } from 'mongodb'
+import multer from 'multer'
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -50,6 +51,21 @@ const mongoClient = new MongoClient(MONGODB_URI)
 let db
 let usersCollection
 let messagesCollection
+let mediaBucket
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB
+  },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+      cb(null, true)
+    } else {
+      cb(new Error('Only image and video files are supported.'))
+    }
+  },
+})
 
 app.use(cors(corsOptions))
 app.use(express.json())
@@ -482,6 +498,147 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
   }
 })
 
+app.post('/api/upload', requireAuth, (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File size exceeds limit of 50MB.' })
+      }
+      return res.status(400).json({ error: err.message })
+    } else if (err) {
+      return res.status(400).json({ error: err.message })
+    }
+    next()
+  })
+}, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No media file provided.' })
+    }
+
+    if (!mediaBucket) {
+      return res.status(500).json({ error: 'Media storage is not ready.' })
+    }
+
+    const isVideo = req.file.mimetype.startsWith('video/')
+    const mediaType = isVideo ? 'video' : 'image'
+
+    const uploadStream = mediaBucket.openUploadStream(req.file.originalname, {
+      contentType: req.file.mimetype,
+      metadata: {
+        uploadedBy: req.userId,
+        mediaType,
+        size: req.file.size,
+        originalName: req.file.originalname,
+        createdAt: new Date(),
+      },
+    })
+
+    uploadStream.on('error', (error) => {
+      console.error('GridFS upload error:', error)
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to upload media to database.' })
+      }
+    })
+
+    uploadStream.on('finish', () => {
+      const fileId = uploadStream.id.toString()
+      res.status(201).json({
+        ok: true,
+        fileId,
+        mediaUrl: `/api/media/${fileId}`,
+        mediaType,
+        mediaName: req.file.originalname,
+        mediaSize: req.file.size,
+      })
+    })
+
+    uploadStream.end(req.file.buffer)
+  } catch (error) {
+    console.error('Media upload handler error:', error)
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Upload failed: ' + error.message })
+    }
+  }
+})
+
+app.get('/api/media/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params
+
+    if (!fileId || !ObjectId.isValid(fileId)) {
+      return res.status(400).json({ error: 'Invalid media ID.' })
+    }
+
+    if (!db || !mediaBucket) {
+      return res.status(500).json({ error: 'Media storage is not ready.' })
+    }
+
+    const _id = new ObjectId(fileId)
+    const files = await db.collection('media.files').find({ _id }).toArray()
+
+    if (!files || files.length === 0) {
+      return res.status(404).json({ error: 'Media not found.' })
+    }
+
+    const file = files[0]
+    const fileSize = file.length
+    const contentType = file.contentType || 'application/octet-stream'
+
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+
+    const range = req.headers.range
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-')
+      const start = parseInt(parts[0], 10)
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+
+      if (isNaN(start) || start >= fileSize || (parts[1] && isNaN(end)) || end >= fileSize || start > end) {
+        res.status(416).set('Content-Range', `bytes */${fileSize}`)
+        return res.end()
+      }
+
+      const chunkSize = end - start + 1
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      })
+
+      const downloadStream = mediaBucket.openDownloadStream(_id, {
+        start,
+        end: end + 1,
+      })
+      downloadStream.on('error', (err) => {
+        console.error('Download stream error:', err.message)
+        if (!res.headersSent) res.status(500).end()
+      })
+      downloadStream.pipe(res)
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      })
+
+      const downloadStream = mediaBucket.openDownloadStream(_id)
+      downloadStream.on('error', (err) => {
+        console.error('Download stream error:', err.message)
+        if (!res.headersSent) res.status(500).end()
+      })
+      downloadStream.pipe(res)
+    }
+  } catch (error) {
+    console.error('Error serving media from GridFS:', error)
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Could not stream media.' })
+    }
+  }
+})
 
 io.on('connection', async (socket) => {
   const userId = socket.data.userId
@@ -507,9 +664,13 @@ io.on('connection', async (socket) => {
     try {
       const receiverId = typeof payload?.receiverId === 'string' ? payload.receiverId.trim() : ''
       const messageText = typeof payload?.text === 'string' ? payload.text.trim() : ''
+      const mediaUrl = typeof payload?.mediaUrl === 'string' ? payload.mediaUrl.trim() : null
+      const mediaType = typeof payload?.mediaType === 'string' ? payload.mediaType.trim() : null
+      const mediaName = typeof payload?.mediaName === 'string' ? payload.mediaName.trim() : null
+      const mediaSize = typeof payload?.mediaSize === 'number' ? payload.mediaSize : null
 
-      if (!receiverId || !messageText) {
-        return done({ ok: false, error: 'Receiver and message text are required' })
+      if (!receiverId || (!messageText && !mediaUrl)) {
+        return done({ ok: false, error: 'Receiver and message text or media are required' })
       }
 
       if (messageText.length > 2000) {
@@ -530,6 +691,10 @@ io.on('connection', async (socket) => {
         senderId: userId,
         receiverId,
         text: messageText,
+        mediaUrl,
+        mediaType,
+        mediaName,
+        mediaSize,
         createdAt: new Date().toISOString(),
       }
 
@@ -571,6 +736,7 @@ async function startServer() {
     db = mongoClient.db(MONGODB_DB_NAME)
     usersCollection = db.collection('users')
     messagesCollection = db.collection('messages')
+    mediaBucket = new GridFSBucket(db, { bucketName: 'media' })
 
     await Promise.all([
       usersCollection.createIndex({ id: 1 }, { unique: true }),

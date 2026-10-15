@@ -84,7 +84,11 @@ class SocketService {
 
   Future<Map<String, dynamic>> sendMessage({
     required String receiverId,
-    required String text,
+    String text = '',
+    String? mediaUrl,
+    String? mediaType,
+    String? mediaName,
+    int? mediaSize,
   }) async {
     final socket = _socket;
     if (socket == null || socket.connected != true) {
@@ -94,7 +98,14 @@ class SocketService {
     final completer = Completer<Map<String, dynamic>>();
     socket.emitWithAck(
       'private:message',
-      {'receiverId': receiverId, 'text': text},
+      {
+        'receiverId': receiverId,
+        'text': text,
+        'mediaUrl': ?mediaUrl,
+        'mediaType': ?mediaType,
+        'mediaName': ?mediaName,
+        'mediaSize': ?mediaSize,
+      },
       ack: (data) {
         if (!completer.isCompleted) {
           completer.complete(

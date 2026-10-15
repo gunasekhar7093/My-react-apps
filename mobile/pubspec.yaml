@@ -39,6 +39,8 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   intl: ^0.20.3
   flutter_bloc: ^9.1.1
+  image_picker: ^1.2.4
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:

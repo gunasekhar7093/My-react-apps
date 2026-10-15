@@ -13,7 +13,18 @@ class ChatMessageReceived extends ChatEvent {
 
 class ChatMessageSendRequested extends ChatEvent {
   final String text;
-  const ChatMessageSendRequested(this.text);
+  final String? mediaUrl;
+  final String? mediaType;
+  final String? mediaName;
+  final int? mediaSize;
+
+  const ChatMessageSendRequested(
+    this.text, {
+    this.mediaUrl,
+    this.mediaType,
+    this.mediaName,
+    this.mediaSize,
+  });
 }
 
 class ChatMarkedRead extends ChatEvent {

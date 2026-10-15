@@ -46,6 +46,32 @@ class ApiClient {
     return _decodeList(response);
   }
 
+  Future<Map<String, dynamic>> uploadMedia({
+    required List<int> bytes,
+    required String filename,
+    required String mimeType,
+  }) async {
+    final uri = Uri.parse('${ApiConstants.baseUrl}/api/upload');
+    final request = http.MultipartRequest('POST', uri);
+
+    final token = await storage.getToken();
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename,
+      ),
+    );
+
+    final streamedResponse = await request.send().timeout(const Duration(minutes: 2));
+    final response = await http.Response.fromStream(streamedResponse);
+    return _decodeMap(response);
+  }
+
   Future<Map<String, String>> _headers(bool authenticated) async {
     final headers = <String, String>{'Content-Type': 'application/json', 'Accept': 'application/json'};
     if (authenticated) {
