@@ -1,12 +1,118 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../core/theme/app_theme.dart';
 
-/// Full screen Instagram-style image preview with sender info, caption bar, instant backdrop dismiss, and pinch-to-zoom.
-class FullScreenImageViewer extends StatelessWidget {
+/// Helper to download media file to device Downloads/Documents directory.
+Future<void> _downloadMediaFile({
+  required BuildContext context,
+  required String url,
+  String? filename,
+  required bool isVideo,
+}) async {
+  try {
+    final uri = Uri.parse(url);
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Server returned status code ${response.statusCode}');
+    }
+
+    final ext = isVideo ? 'mp4' : 'jpg';
+    String cleanName = (filename != null && filename.trim().isNotEmpty)
+        ? filename.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        : '';
+    if (cleanName.isEmpty) {
+      cleanName = 'ChatSpace_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    } else if (!cleanName.contains('.')) {
+      cleanName = '$cleanName.$ext';
+    }
+
+    Directory? targetDir;
+    if (Platform.isAndroid) {
+      final androidDownload = Directory('/storage/emulated/0/Download');
+      if (await androidDownload.exists()) {
+        targetDir = androidDownload;
+      }
+    }
+
+    if (targetDir == null) {
+      try {
+        targetDir = await getDownloadsDirectory();
+      } catch (_) {}
+    }
+
+    targetDir ??= await getApplicationDocumentsDirectory();
+
+    String finalPath = '${targetDir.path}/$cleanName';
+    int counter = 1;
+    final dotIndex = cleanName.lastIndexOf('.');
+    final baseName = dotIndex != -1 ? cleanName.substring(0, dotIndex) : cleanName;
+    final extension = dotIndex != -1 ? cleanName.substring(dotIndex) : '.$ext';
+
+    while (await File(finalPath).exists()) {
+      finalPath = '${targetDir.path}/${baseName}_$counter$extension';
+      counter++;
+    }
+
+    final savedFile = File(finalPath);
+    await savedFile.writeAsBytes(response.bodyBytes);
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Saved: ${savedFile.path.split(Platform.pathSeparator).last}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF10B981),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Download failed: $e',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+}
+
+/// Full screen Instagram-style image preview with sender info, download button, caption bar, instant backdrop dismiss, and pinch-to-zoom.
+class FullScreenImageViewer extends StatefulWidget {
   final String imageUrl;
   final String? title;
   final String heroTag;
@@ -82,15 +188,37 @@ class FullScreenImageViewer extends StatelessWidget {
   }
 
   @override
+  State<FullScreenImageViewer> createState() => _FullScreenImageViewerState();
+}
+
+class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
+  bool _downloading = false;
+
+  Future<void> _handleDownload() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      await _downloadMediaFile(
+        context: context,
+        url: widget.imageUrl,
+        filename: widget.title,
+        isVideo: false,
+      );
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final formattedTime = formatTimestamp(timestamp);
-    final initial = (avatarInitial != null && avatarInitial!.isNotEmpty)
-        ? avatarInitial!
-        : (senderName.isNotEmpty ? senderName[0].toUpperCase() : '?');
+    final formattedTime = FullScreenImageViewer.formatTimestamp(widget.timestamp);
+    final initial = (widget.avatarInitial != null && widget.avatarInitial!.isNotEmpty)
+        ? widget.avatarInitial!
+        : (widget.senderName.isNotEmpty ? widget.senderName[0].toUpperCase() : '?');
     final gradientColors = AppTheme.getAvatarGradient(
-      senderId.isNotEmpty ? senderId : senderName,
+      widget.senderId.isNotEmpty ? widget.senderId : widget.senderName,
     );
-    final hasCaption = caption != null && caption!.trim().isNotEmpty;
+    final hasCaption = widget.caption != null && widget.caption!.trim().isNotEmpty;
 
     return Shortcuts(
       shortcuts: <ShortcutActivator, Intent>{
@@ -152,9 +280,9 @@ class FullScreenImageViewer extends StatelessWidget {
                               minScale: 0.8,
                               maxScale: 4.0,
                               child: Hero(
-                                tag: heroTag,
+                                tag: widget.heroTag,
                                 child: Image.network(
-                                  imageUrl,
+                                  widget.imageUrl,
                                   fit: BoxFit.contain,
                                   loadingBuilder: (context, child, loadingProgress) {
                                     if (loadingProgress == null) return child;
@@ -216,7 +344,7 @@ class FullScreenImageViewer extends StatelessWidget {
                                       ),
                                     ),
                                     child: Text(
-                                      caption!,
+                                      widget.caption!,
                                       maxLines: 4,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
@@ -243,7 +371,7 @@ class FullScreenImageViewer extends StatelessWidget {
                   ),
                 ),
 
-                // Top Bar: Sender gradient avatar, name, sent timestamp, and ✕ close button
+                // Top Bar: Sender gradient avatar, name, sent timestamp, download button, and ✕ close button
                 Positioned(
                   top: 0,
                   left: 0,
@@ -303,7 +431,7 @@ class FullScreenImageViewer extends StatelessWidget {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    senderName,
+                                    widget.senderName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
@@ -329,6 +457,40 @@ class FullScreenImageViewer extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 12),
+
+                            // Download Button (at left side of X button)
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _downloading ? null : _handleDownload,
+                              child: Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.14),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    width: 1,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: _downloading
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.download_rounded,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
 
                             // Top-Right ✕ Dismiss Button
                             GestureDetector(
@@ -499,7 +661,7 @@ class VideoPlayerBubble extends StatelessWidget {
   }
 }
 
-/// Full screen Instagram-style video player with playback controls, sender info, caption bar, and instant dismiss.
+/// Full screen Instagram-style video player with playback controls, sender info, download button, caption bar, and instant dismiss.
 class FullScreenVideoViewer extends StatefulWidget {
   final String videoUrl;
   final String? title;
@@ -581,6 +743,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
   bool _hasError = false;
   String _errorMessage = '';
   bool _showControls = true;
+  bool _downloading = false;
 
   @override
   void initState() {
@@ -630,6 +793,21 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
         controller.play();
       }
     });
+  }
+
+  Future<void> _handleDownload() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      await _downloadMediaFile(
+        context: context,
+        url: widget.videoUrl,
+        filename: widget.title,
+        isVideo: true,
+      );
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
   }
 
   String _formatDuration(Duration duration) {
@@ -900,7 +1078,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                   ),
                 ),
 
-                // Top Bar: Sender gradient avatar, name, sent timestamp, and ✕ close button
+                // Top Bar: Sender gradient avatar, name, sent timestamp, download button, and ✕ close button
                 Positioned(
                   top: 0,
                   left: 0,
@@ -986,6 +1164,40 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                               ),
                             ),
                             const SizedBox(width: 12),
+
+                            // Download Button (at left side of X button)
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _downloading ? null : _handleDownload,
+                              child: Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.14),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    width: 1,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: _downloading
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.download_rounded,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
 
                             // Top-Right ✕ Dismiss Button
                             GestureDetector(

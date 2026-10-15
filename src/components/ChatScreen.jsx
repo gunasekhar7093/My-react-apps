@@ -387,15 +387,28 @@ export default function ChatScreen({
               </div>
             </div>
 
-            <button
-              type="button"
-              className="insta-preview-close"
-              onClick={() => setActiveMediaModal(null)}
-              title="Close (Esc)"
-              aria-label="Close"
-            >
-              <Icon name="close" size={22} />
-            </button>
+            <div className="insta-preview-actions">
+              <button
+                type="button"
+                className="insta-preview-btn"
+                onClick={downloadActiveMedia}
+                disabled={downloading}
+                title="Download media"
+                aria-label="Download media"
+              >
+                <Icon name="download" size={20} />
+              </button>
+
+              <button
+                type="button"
+                className="insta-preview-close"
+                onClick={() => setActiveMediaModal(null)}
+                title="Close (Esc)"
+                aria-label="Close"
+              >
+                <Icon name="close" size={22} />
+              </button>
+            </div>
           </div>
 
           {/* Centered Media Content */}

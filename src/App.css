@@ -131,6 +131,13 @@
   margin-top: 1px;
 }
 
+.insta-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.insta-preview-btn,
 .insta-preview-close {
   width: 40px;
   height: 40px;
@@ -145,9 +152,16 @@
   transition: all 0.15s ease;
 }
 
+.insta-preview-btn:hover,
 .insta-preview-close:hover {
   background: rgba(255, 255, 255, 0.25);
   transform: scale(1.06);
+}
+
+.insta-preview-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .insta-preview-stage {
