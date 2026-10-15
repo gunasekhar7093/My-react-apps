@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
+import '../../../core/storage/secure_storage_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/message_model.dart';
 import '../../../data/models/user_model.dart';
@@ -29,9 +30,13 @@ class _ChatPageState extends State<ChatPage> {
   final _picker = ImagePicker();
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  String? _token;
 
   @override void initState() {
     super.initState();
+    SecureStorageService().getToken().then((val) {
+      if (mounted) setState(() => _token = val);
+    });
     _socket = SocketService();
     _bloc = ChatBloc(
       repository: MessageRepository(),
@@ -340,9 +345,10 @@ class _ChatPageState extends State<ChatPage> {
                                       uploadError = null;
                                     });
                                     try {
-                                      final mimeType = file.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg');
+                                      final mimeType = file.mimeType ?? _lookupMimeType(file.name, isVideo: isVideo);
                                       final uploadRes = await _apiClient.uploadMedia(
                                         bytes: bytes,
+                                        filePath: file.path,
                                         filename: file.name,
                                         mimeType: mimeType,
                                       );
@@ -610,6 +616,7 @@ class _ChatPageState extends State<ChatPage> {
                                   message: current,
                                   time: _time(current.createdAt),
                                   mine: current.senderId == widget.currentUserId,
+                                  token: _token,
                                 ),
                               ],
                             );
@@ -756,6 +763,44 @@ class _ChatPageState extends State<ChatPage> {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+
+  static String _lookupMimeType(String filename, {required bool isVideo}) {
+    final dotIndex = filename.lastIndexOf('.');
+    final ext = dotIndex != -1 ? filename.substring(dotIndex + 1).toLowerCase() : '';
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'bmp':
+        return 'image/bmp';
+      case 'heic':
+        return 'image/heic';
+      case 'heif':
+        return 'image/heif';
+      case 'mp4':
+        return 'video/mp4';
+      case 'mov':
+        return 'video/quicktime';
+      case 'mkv':
+        return 'video/x-matroska';
+      case 'webm':
+        return 'video/webm';
+      case '3gp':
+        return 'video/3gpp';
+      case 'avi':
+        return 'video/x-msvideo';
+      case 'm4v':
+        return 'video/x-m4v';
+      default:
+        return isVideo ? 'video/mp4' : 'image/jpeg';
+    }
+  }
 }
 
 class _MediaOptionItem extends StatelessWidget {
@@ -859,11 +904,13 @@ class _Bubble extends StatelessWidget {
   final MessageModel message;
   final String time;
   final bool mine;
+  final String? token;
 
   const _Bubble({
     required this.message,
     required this.time,
     required this.mine,
+    this.token,
   });
 
   @override Widget build(BuildContext context) {
@@ -872,9 +919,16 @@ class _Bubble extends StatelessWidget {
 
     final hasMedia = message.isMedia;
     final mediaUrl = message.mediaUrl;
-    final fullMediaUrl = mediaUrl != null
-        ? (mediaUrl.startsWith('http') ? mediaUrl : '${ApiConstants.baseUrl}$mediaUrl')
+    final baseMediaUrl = mediaUrl != null && mediaUrl.isNotEmpty
+        ? (mediaUrl.startsWith('http')
+            ? mediaUrl
+            : (mediaUrl.startsWith('/')
+                ? '${ApiConstants.baseUrl}$mediaUrl'
+                : '${ApiConstants.baseUrl}/$mediaUrl'))
         : '';
+    final fullMediaUrl = baseMediaUrl.isNotEmpty && token != null && token!.isNotEmpty && !baseMediaUrl.contains('token=')
+        ? (baseMediaUrl.contains('?') ? '$baseMediaUrl&token=$token' : '$baseMediaUrl?token=$token')
+        : baseMediaUrl;
 
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,

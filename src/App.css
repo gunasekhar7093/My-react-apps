@@ -47,4 +47,158 @@
 .media-preview-info strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#1e293b}
 .media-preview-info small{font-size:11px;color:#64748b}
 .media-preview-clear{background:transparent;border:none;color:#64748b;cursor:pointer;padding:6px;border-radius:50%;display:flex;align-items:center;justify-content:center}
-.media-preview-clear:hover{background:#e2e8f0;color:#0f172a}
+.media-preview-clear:hover{background:#e2e8f0;color:#0f172a}
+
+/* Instagram-style In-App Photo & Video Preview */
+.insta-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  animation: instaFadeIn 0.18s ease-out;
+  user-select: none;
+}
+
+@keyframes instaFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes instaScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.insta-preview-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 68px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 10002;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75) 0%, transparent 100%);
+}
+
+.insta-preview-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.insta-preview-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f09433, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.insta-preview-meta {
+  display: flex;
+  flex-direction: column;
+}
+
+.insta-preview-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.2px;
+}
+
+.insta-preview-time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  margin-top: 1px;
+}
+
+.insta-preview-close {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.insta-preview-close:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.06);
+}
+
+.insta-preview-stage {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 76px 20px 24px;
+  box-sizing: border-box;
+  cursor: zoom-out;
+}
+
+.insta-preview-media-container {
+  position: relative;
+  max-width: 90vw;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  animation: instaScaleIn 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.15);
+}
+
+.insta-preview-element {
+  max-width: 90vw;
+  max-height: 82vh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  display: block;
+}
+
+.insta-preview-caption-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 24px 16px 14px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+  pointer-events: none;
+}
+
+.insta-preview-caption-text {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}

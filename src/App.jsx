@@ -574,6 +574,7 @@ function App() {
               sendMessage={sendMessage}
               sendMedia={sendMedia}
               apiUrl={API_URL}
+              token={token}
               onBack={() => navigate('/dashboard')}
             />
           </ProtectedRoute>

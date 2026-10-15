@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>ChatSpace needs access to your photo library to share photos and videos in chat.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ChatSpace needs access to your camera to take photos and record videos for chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ChatSpace needs access to your microphone to record videos with audio.</string>
 </dict>
 </plist>

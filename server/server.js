@@ -59,7 +59,17 @@ const upload = multer({
     fileSize: 50 * 1024 * 1024, // 50MB
   },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+    const ext = (file.originalname || '').toLowerCase()
+    const isImageExt = /\.(jpe?g|png|gif|webp|bmp|heic|heif|svg)$/i.test(ext)
+    const isVideoExt = /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(ext)
+    const mimetype = file.mimetype || ''
+
+    if (
+      mimetype.startsWith('image/') ||
+      mimetype.startsWith('video/') ||
+      isImageExt ||
+      isVideoExt
+    ) {
       cb(null, true)
     } else {
       cb(new Error('Only image and video files are supported.'))
@@ -520,11 +530,21 @@ app.post('/api/upload', requireAuth, (req, res, next) => {
       return res.status(500).json({ error: 'Media storage is not ready.' })
     }
 
-    const isVideo = req.file.mimetype.startsWith('video/')
+    const ext = (req.file.originalname || '').toLowerCase()
+    const isVideo = (req.file.mimetype || '').startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(ext)
     const mediaType = isVideo ? 'video' : 'image'
 
+    let determinedContentType = req.file.mimetype
+    if (!determinedContentType || determinedContentType === 'application/octet-stream') {
+      if (isVideo) {
+        determinedContentType = ext.endsWith('.mov') ? 'video/quicktime' : 'video/mp4'
+      } else {
+        determinedContentType = ext.endsWith('.png') ? 'image/png' : 'image/jpeg'
+      }
+    }
+
     const uploadStream = mediaBucket.openUploadStream(req.file.originalname, {
-      contentType: req.file.mimetype,
+      contentType: determinedContentType,
       metadata: {
         uploadedBy: req.userId,
         mediaType,
@@ -574,6 +594,14 @@ app.get('/api/media/:fileId', async (req, res) => {
       return res.status(500).json({ error: 'Media storage is not ready.' })
     }
 
+    // Require authentication: Bearer header OR ?token= query parameter
+    const token = getBearerToken(req) || (typeof req.query.token === 'string' ? req.query.token.trim() : null)
+    const userId = authenticateToken(token)
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required to access private media.' })
+    }
+
     const _id = new ObjectId(fileId)
     const files = await db.collection('media.files').find({ _id }).toArray()
 
@@ -582,11 +610,45 @@ app.get('/api/media/:fileId', async (req, res) => {
     }
 
     const file = files[0]
+
+    // Authorization: only the uploader or the conversation participants (sender or receiver)
+    const isUploader = file.metadata?.uploadedBy === userId
+    let isAuthorized = isUploader
+
+    if (!isAuthorized) {
+      const message = await messagesCollection.findOne({
+        $and: [
+          {
+            $or: [
+              { mediaUrl: `/api/media/${fileId}` },
+              { mediaUrl: { $regex: fileId } },
+            ],
+          },
+          {
+            $or: [
+              { senderId: userId },
+              { receiverId: userId },
+            ],
+          },
+        ],
+      })
+      if (message) {
+        isAuthorized = true
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: 'You are not authorized to view this private media.' })
+    }
+
     const fileSize = file.length
     const contentType = file.contentType || 'application/octet-stream'
 
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate')
+    res.setHeader('Pragma', 'no-cache')
+    res.setHeader('Expires', '0')
 
     const range = req.headers.range
     if (range) {
@@ -605,7 +667,9 @@ app.get('/api/media/:fileId', async (req, res) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       })
 
       const downloadStream = mediaBucket.openDownloadStream(_id, {
@@ -622,7 +686,9 @@ app.get('/api/media/:fileId', async (req, res) => {
         'Content-Length': fileSize,
         'Content-Type': contentType,
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       })
 
       const downloadStream = mediaBucket.openDownloadStream(_id)

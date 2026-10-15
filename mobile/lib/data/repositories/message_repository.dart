@@ -19,8 +19,8 @@ class MessageRepository {
     final messages = data['messages'];
     if (messages is! List) return const [];
     return messages
-        .whereType<Map<String, dynamic>>()
-        .map(MessageModel.fromJson)
+        .whereType<Map>()
+        .map((m) => MessageModel.fromJson(Map<String, dynamic>.from(m)))
         .toList();
   }
 

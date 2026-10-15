@@ -228,7 +228,7 @@ class FullScreenVideoViewer extends StatefulWidget {
 }
 
 class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
-  late VideoPlayerController _controller;
+  VideoPlayerController? _controller;
   bool _initialized = false;
   bool _hasError = false;
   String _errorMessage = '';
@@ -242,14 +242,15 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
 
   Future<void> _initializePlayer() async {
     try {
-      _controller = VideoPlayerController.networkUrl(
+      final controller = VideoPlayerController.networkUrl(
         Uri.parse(widget.videoUrl),
       );
-      await _controller.initialize();
-      _controller.addListener(() {
+      _controller = controller;
+      await controller.initialize();
+      controller.addListener(() {
         if (mounted) setState(() {});
       });
-      await _controller.play();
+      await controller.play();
       if (mounted) {
         setState(() {
           _initialized = true;
@@ -267,17 +268,18 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
   void _togglePlayPause() {
-    if (!_initialized) return;
+    final controller = _controller;
+    if (controller == null || !_initialized) return;
     setState(() {
-      if (_controller.value.isPlaying) {
-        _controller.pause();
+      if (controller.value.isPlaying) {
+        controller.pause();
       } else {
-        _controller.play();
+        controller.play();
       }
     });
   }
@@ -325,10 +327,10 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                         ],
                       ),
                     )
-                  : _initialized
+                  : (_initialized && _controller != null)
                       ? AspectRatio(
-                          aspectRatio: _controller.value.aspectRatio,
-                          child: VideoPlayer(_controller),
+                          aspectRatio: _controller!.value.aspectRatio,
+                          child: VideoPlayer(_controller!),
                         )
                       : const SizedBox(
                           width: 48,
@@ -377,7 +379,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
             ),
 
             // Center Play / Pause button overlay
-            if (_initialized && _showControls)
+            if (_initialized && _controller != null && _showControls)
               Center(
                 child: GestureDetector(
                   onTap: _togglePlayPause,
@@ -390,7 +392,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                       border: Border.all(color: Colors.white70, width: 1.5),
                     ),
                     child: Icon(
-                      _controller.value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      _controller!.value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                       color: Colors.white,
                       size: 40,
                     ),
@@ -399,7 +401,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
               ),
 
             // Bottom controls
-            if (_initialized)
+            if (_initialized && _controller != null)
               AnimatedOpacity(
                 opacity: _showControls ? 1.0 : 0.0,
                 duration: const Duration(milliseconds: 200),
@@ -419,7 +421,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                       children: [
                         // Scrub progress bar
                         VideoProgressIndicator(
-                          _controller,
+                          _controller!,
                           allowScrubbing: true,
                           colors: const VideoProgressColors(
                             playedColor: Color(0xFF6366F1),
@@ -433,7 +435,7 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              '${_formatDuration(_controller.value.position)} / ${_formatDuration(_controller.value.duration)}',
+                              '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
                               style: const TextStyle(color: Colors.white70, fontSize: 12),
                             ),
                             Row(
@@ -441,28 +443,28 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
                               children: [
                                 IconButton(
                                   icon: Icon(
-                                    _controller.value.volume > 0 ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                                    _controller!.value.volume > 0 ? Icons.volume_up_rounded : Icons.volume_off_rounded,
                                     color: Colors.white,
                                     size: 20,
                                   ),
                                   onPressed: () {
                                     setState(() {
-                                      _controller.setVolume(_controller.value.volume > 0 ? 0 : 1);
+                                      _controller!.setVolume(_controller!.value.volume > 0 ? 0 : 1);
                                     });
                                   },
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.replay_10_rounded, color: Colors.white, size: 20),
                                   onPressed: () {
-                                    final current = _controller.value.position;
-                                    _controller.seekTo(current - const Duration(seconds: 10));
+                                    final current = _controller!.value.position;
+                                    _controller!.seekTo(current - const Duration(seconds: 10));
                                   },
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.forward_10_rounded, color: Colors.white, size: 20),
                                   onPressed: () {
-                                    final current = _controller.value.position;
-                                    _controller.seekTo(current + const Duration(seconds: 10));
+                                    final current = _controller!.value.position;
+                                    _controller!.seekTo(current + const Duration(seconds: 10));
                                   },
                                 ),
                               ],

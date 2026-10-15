@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import '../storage/secure_storage_service.dart';
 import '../constants/api_constants.dart';
 
+import 'package:http_parser/http_parser.dart';
+
 class ApiException implements Exception {
   final int statusCode;
   final String message;
@@ -50,6 +52,7 @@ class ApiClient {
     required List<int> bytes,
     required String filename,
     required String mimeType,
+    String? filePath,
   }) async {
     final uri = Uri.parse('${ApiConstants.baseUrl}/api/upload');
     final request = http.MultipartRequest('POST', uri);
@@ -59,15 +62,51 @@ class ApiClient {
       request.headers['Authorization'] = 'Bearer $token';
     }
 
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        bytes,
-        filename: filename,
-      ),
-    );
+    MediaType? parsedContentType;
+    try {
+      final parts = mimeType.split('/');
+      if (parts.length == 2) {
+        parsedContentType = MediaType(parts[0].trim(), parts[1].trim());
+      }
+    } catch (_) {
+      parsedContentType = MediaType(
+        mimeType.startsWith('video') ? 'video' : 'image',
+        mimeType.startsWith('video') ? 'mp4' : 'jpeg',
+      );
+    }
 
-    final streamedResponse = await request.send().timeout(const Duration(minutes: 2));
+    if (filePath != null && filePath.isNotEmpty) {
+      try {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            filePath,
+            filename: filename,
+            contentType: parsedContentType,
+          ),
+        );
+      } catch (_) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'file',
+            bytes,
+            filename: filename,
+            contentType: parsedContentType,
+          ),
+        );
+      }
+    } else {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: filename,
+          contentType: parsedContentType,
+        ),
+      );
+    }
+
+    final streamedResponse = await request.send().timeout(const Duration(minutes: 3));
     final response = await http.Response.fromStream(streamedResponse);
     return _decodeMap(response);
   }

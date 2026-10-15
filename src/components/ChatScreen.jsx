@@ -26,6 +26,7 @@ const Icon = ({ name, size = 20 }) => {
     clip: <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l7.88-7.88" />,
     close: <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>,
     video: <><path d="m22 8-6 4 6 4V8Z" /><rect width="14" height="12" x="2" y="6" rx="2" ry="2" /></>,
+    download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></>,
   }
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
@@ -42,6 +43,7 @@ export default function ChatScreen({
   sendMessage,
   sendMedia,
   apiUrl = '',
+  token = '',
   onBack,
 }) {
   const chatBodyRef = useRef(null)
@@ -55,6 +57,53 @@ export default function ChatScreen({
   const [selectedFile, setSelectedFile] = useState(null)
   const [filePreview, setFilePreview] = useState(null)
   const [uploading, setUploading] = useState(false)
+  const [activeMediaModal, setActiveMediaModal] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+
+  function getMediaSrc(mediaUrl) {
+    if (!mediaUrl) return null
+    const base = mediaUrl.startsWith('http') ? mediaUrl : (apiUrl + mediaUrl)
+    if (!token || base.includes('token=')) return base
+    const sep = base.includes('?') ? '&' : '?'
+    return `${base}${sep}token=${encodeURIComponent(token)}`
+  }
+
+  useEffect(() => {
+    if (!activeMediaModal) return
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setActiveMediaModal(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activeMediaModal])
+
+  async function downloadActiveMedia() {
+    if (!activeMediaModal?.url || downloading) return
+    setDownloading(true)
+    try {
+      const response = await fetch(activeMediaModal.url)
+      if (!response.ok) throw new Error('Download failed')
+      const blob = await response.blob()
+      const blobUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = activeMediaModal.name || 'chat-media'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(blobUrl)
+    } catch {
+      const link = document.createElement('a')
+      link.href = activeMediaModal.url
+      link.download = activeMediaModal.name || 'chat-media'
+      link.target = '_blank'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   useEffect(() => {
     if (chatLoading) return
@@ -203,7 +252,7 @@ export default function ChatScreen({
               const itemDate = new Date(item.createdAt)
               const previousDate = index > 0 ? new Date(messages[index - 1].createdAt) : null
               const isNewDate = !previousDate || itemDate.toDateString() !== previousDate.toDateString()
-              const mediaSrc = item.mediaUrl ? (item.mediaUrl.startsWith('http') ? item.mediaUrl : (apiUrl + item.mediaUrl)) : null
+              const mediaSrc = getMediaSrc(item.mediaUrl)
 
               return (
                 <div key={item.id}>
@@ -230,7 +279,17 @@ export default function ChatScreen({
                               alt={item.mediaName || 'Media'}
                               className="chat-media-image"
                               loading="lazy"
-                              onClick={() => window.open(mediaSrc, '_blank')}
+                              onClick={() =>
+                                setActiveMediaModal({
+                                  url: mediaSrc,
+                                  name: item.mediaName || 'Photo',
+                                  type: item.mediaType || 'image',
+                                  caption: item.text || '',
+                                  date: itemDate,
+                                  senderName: item.senderId === user.id ? 'You' : selectedUser.name,
+                                  avatar: (item.senderId === user.id ? user.name : selectedUser.name)?.charAt(0)?.toUpperCase() || '?',
+                                })
+                              }
                             />
                           )}
                         </div>
@@ -307,6 +366,66 @@ export default function ChatScreen({
           )}
         </button>
       </form>
+
+      {/* Instagram-style In-App Photo & Video Preview */}
+      {activeMediaModal && (
+        <div
+          className="insta-preview-overlay"
+          onClick={() => setActiveMediaModal(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          {/* Top Bar with Sender Info and Close Button */}
+          <div className="insta-preview-topbar" onClick={(e) => e.stopPropagation()}>
+            <div className="insta-preview-user">
+              <span className="insta-preview-avatar">{activeMediaModal.avatar}</span>
+              <div className="insta-preview-meta">
+                <span className="insta-preview-name">{activeMediaModal.senderName}</span>
+                <span className="insta-preview-time">
+                  {activeMediaModal.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} • {activeMediaModal.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="insta-preview-close"
+              onClick={() => setActiveMediaModal(null)}
+              title="Close (Esc)"
+              aria-label="Close"
+            >
+              <Icon name="close" size={22} />
+            </button>
+          </div>
+
+          {/* Centered Media Content */}
+          <div className="insta-preview-stage" onClick={() => setActiveMediaModal(null)}>
+            <div className="insta-preview-media-container" onClick={(e) => e.stopPropagation()}>
+              {activeMediaModal.type === 'video' ? (
+                <video
+                  src={activeMediaModal.url}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="insta-preview-element"
+                />
+              ) : (
+                <img
+                  src={activeMediaModal.url}
+                  alt={activeMediaModal.name}
+                  className="insta-preview-element"
+                />
+              )}
+
+              {activeMediaModal.caption && (
+                <div className="insta-preview-caption-bar">
+                  <span className="insta-preview-caption-text">{activeMediaModal.caption}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
