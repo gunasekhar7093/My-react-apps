@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
@@ -31,11 +32,24 @@ class _ChatPageState extends State<ChatPage> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   String? _token;
+  String? _currentUserName;
 
   @override void initState() {
     super.initState();
     SecureStorageService().getToken().then((val) {
       if (mounted) setState(() => _token = val);
+    });
+    SecureStorageService().getUser().then((val) {
+      if (val != null) {
+        try {
+          final data = jsonDecode(val);
+          if (mounted) {
+            setState(() {
+              _currentUserName = data['name']?.toString() ?? data['username']?.toString();
+            });
+          }
+        } catch (_) {}
+      }
     });
     _socket = SocketService();
     _bloc = ChatBloc(
@@ -607,6 +621,14 @@ class _ChatPageState extends State<ChatPage> {
                                   state.messages[chronologicalIndex - 1].createdAt,
                                 );
 
+                            final isMine = current.senderId == widget.currentUserId;
+                            final senderName = isMine ? 'You' : widget.user.name;
+                            final avatarInitial = isMine
+                                ? (_currentUserName != null && _currentUserName!.isNotEmpty
+                                    ? _currentUserName![0].toUpperCase()
+                                    : 'Y')
+                                : (widget.user.name.isNotEmpty ? widget.user.name[0].toUpperCase() : '?');
+
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
@@ -615,8 +637,10 @@ class _ChatPageState extends State<ChatPage> {
                                 _Bubble(
                                   message: current,
                                   time: _time(current.createdAt),
-                                  mine: current.senderId == widget.currentUserId,
+                                  mine: isMine,
                                   token: _token,
+                                  senderName: senderName,
+                                  avatarInitial: avatarInitial,
                                 ),
                               ],
                             );
@@ -905,12 +929,16 @@ class _Bubble extends StatelessWidget {
   final String time;
   final bool mine;
   final String? token;
+  final String senderName;
+  final String? avatarInitial;
 
   const _Bubble({
     required this.message,
     required this.time,
     required this.mine,
     this.token,
+    required this.senderName,
+    this.avatarInitial,
   });
 
   @override Widget build(BuildContext context) {
@@ -976,11 +1004,14 @@ class _Bubble extends StatelessWidget {
                   fileSize: message.mediaSize,
                   onTap: () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => FullScreenVideoViewer(
-                          videoUrl: fullMediaUrl,
-                          title: message.mediaName,
-                        ),
+                      FullScreenVideoViewer.route(
+                        videoUrl: fullMediaUrl,
+                        title: message.mediaName,
+                        senderName: senderName,
+                        senderId: message.senderId,
+                        timestamp: message.createdAt,
+                        caption: message.text,
+                        avatarInitial: avatarInitial,
                       ),
                     );
                   },
@@ -989,12 +1020,15 @@ class _Bubble extends StatelessWidget {
                 GestureDetector(
                   onTap: () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => FullScreenImageViewer(
-                          imageUrl: fullMediaUrl,
-                          title: message.mediaName,
-                          heroTag: 'media_${message.id}',
-                        ),
+                      FullScreenImageViewer.route(
+                        imageUrl: fullMediaUrl,
+                        title: message.mediaName,
+                        heroTag: 'media_${message.id}',
+                        senderName: senderName,
+                        senderId: message.senderId,
+                        timestamp: message.createdAt,
+                        caption: message.text,
+                        avatarInitial: avatarInitial,
                       ),
                     );
                   },
