@@ -14,9 +14,22 @@ typedef MessageCallback = void Function(Map<String, dynamic> message);
 typedef SocketConnectionCallback = void Function();
 typedef SocketErrorCallback = void Function(String message);
 
+/// A single Socket.IO client that is created once in DashboardPage and shared
+/// with ChatPage.  ChatPage registers page-level callbacks via [addOnMessage]
+/// / [addOnUserStatus] and removes them in dispose without ever calling
+/// [connect] or [disconnect].
 class SocketService {
   final SecureStorageService storage;
   io.Socket? _socket;
+
+  // Primary handlers registered at connection time (DashboardPage)
+  UserStatusCallback? _onUserStatus;
+  MessageCallback? _onMessage;
+
+  // Secondary handlers registered by ChatPage while a chat is open.
+  // Using a list so multiple listeners can coexist without stomping.
+  final List<MessageCallback> _extraMessageCallbacks = [];
+  final List<UserStatusCallback> _extraStatusCallbacks = [];
 
   SocketService({SecureStorageService? storage})
       : storage = storage ?? SecureStorageService();
@@ -29,6 +42,9 @@ class SocketService {
     SocketConnectionCallback? onConnected,
     SocketErrorCallback? onError,
   }) async {
+    _onUserStatus = onUserStatus;
+    _onMessage = onMessage;
+
     if (_socket?.connected == true) return;
 
     final token = await storage.getToken();
@@ -69,18 +85,62 @@ class SocketService {
         final userId = data['userId']?.toString();
         final status = data['status']?.toString();
         if (userId == null || status == null) return;
-        onUserStatus(
+        final lastSeenAt = data['lastSeenAt']?.toString();
+        // Dispatch to primary handler (DashboardPage)
+        _onUserStatus?.call(
           userId: userId,
           status: status,
-          lastSeenAt: data['lastSeenAt']?.toString(),
+          lastSeenAt: lastSeenAt,
         );
+        // Dispatch to any extra handlers (ChatPage)
+        for (final cb in List.of(_extraStatusCallbacks)) {
+          cb(userId: userId, status: status, lastSeenAt: lastSeenAt);
+        }
       })
       ..on('private:message', (data) {
-        if (onMessage == null || data is! Map) return;
-        onMessage(Map<String, dynamic>.from(data));
+        if (data is! Map) return;
+        final msg = Map<String, dynamic>.from(data);
+        // Dispatch to primary handler (DashboardPage)
+        _onMessage?.call(msg);
+        // Dispatch to any extra handlers (ChatPage)
+        for (final cb in List.of(_extraMessageCallbacks)) {
+          cb(msg);
+        }
       })
       ..connect();
   }
+
+  // ── Secondary callback management (used by ChatPage) ─────────────────────
+
+  /// Add an additional message listener. Call [removeOnMessage] in dispose.
+  void addOnMessage(MessageCallback callback) {
+    _extraMessageCallbacks.add(callback);
+  }
+
+  /// Remove a previously added message listener.
+  void removeOnMessage([MessageCallback? callback]) {
+    if (callback != null) {
+      _extraMessageCallbacks.remove(callback);
+    } else {
+      _extraMessageCallbacks.clear();
+    }
+  }
+
+  /// Add an additional user-status listener. Call [removeOnUserStatus] in dispose.
+  void addOnUserStatus(UserStatusCallback callback) {
+    _extraStatusCallbacks.add(callback);
+  }
+
+  /// Remove a previously added user-status listener.
+  void removeOnUserStatus([UserStatusCallback? callback]) {
+    if (callback != null) {
+      _extraStatusCallbacks.remove(callback);
+    } else {
+      _extraStatusCallbacks.clear();
+    }
+  }
+
+  // ── Message sending ───────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> sendMessage({
     required String receiverId,
@@ -98,13 +158,14 @@ class SocketService {
     final completer = Completer<Map<String, dynamic>>();
     socket.emitWithAck(
       'private:message',
+      // ignore: use_null_aware_elements
       {
         'receiverId': receiverId,
         'text': text,
-        'mediaUrl': ?mediaUrl,
-        'mediaType': ?mediaType,
-        'mediaName': ?mediaName,
-        'mediaSize': ?mediaSize,
+        if (mediaUrl != null) 'mediaUrl': mediaUrl,
+        if (mediaType != null) 'mediaType': mediaType,
+        if (mediaName != null) 'mediaName': mediaName,
+        if (mediaSize != null) 'mediaSize': mediaSize,
       },
       ack: (data) {
         if (!completer.isCompleted) {
@@ -131,6 +192,8 @@ class SocketService {
   }
 
   void disconnect() {
+    _extraMessageCallbacks.clear();
+    _extraStatusCallbacks.clear();
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;

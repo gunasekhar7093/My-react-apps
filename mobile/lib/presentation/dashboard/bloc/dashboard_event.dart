@@ -49,3 +49,10 @@ class DashboardUnreadCountReconciled extends DashboardEvent {
 
   const DashboardUnreadCountReconciled(this.user);
 }
+
+/// Emitted when the user opens or closes a chat.
+/// [openUserId] is the id of the chat partner currently open (null when closed).
+class DashboardOpenChatChanged extends DashboardEvent {
+  final String? openUserId;
+  const DashboardOpenChatChanged(this.openUserId);
+}

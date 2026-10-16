@@ -7,12 +7,17 @@ class DashboardState {
   final List<UserModel> users;
   final String searchQuery;
   final String? errorMessage;
+  /// The id of the chat partner whose conversation is currently open.
+  /// While non-null, incoming messages from this user must NOT increment
+  /// the unread badge because the user is actively reading that chat.
+  final String? openChatUserId;
 
   const DashboardState({
     this.status = DashboardStatus.initial,
     this.users = const [],
     this.searchQuery = '',
     this.errorMessage,
+    this.openChatUserId,
   });
 
   List<UserModel> get filteredUsers {
@@ -39,12 +44,15 @@ class DashboardState {
     List<UserModel>? users,
     String? searchQuery,
     String? errorMessage,
+    String? openChatUserId,
+    bool clearOpenChatUserId = false,
   }) {
     return DashboardState(
       status: status ?? this.status,
       users: users ?? this.users,
       searchQuery: searchQuery ?? this.searchQuery,
       errorMessage: errorMessage,
+      openChatUserId: clearOpenChatUserId ? null : openChatUserId ?? this.openChatUserId,
     );
   }
 }

@@ -12,6 +12,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../data/models/message_model.dart';
 import '../../../data/models/user_model.dart';
 import '../../../data/repositories/message_repository.dart';
+import '../../dashboard/bloc/dashboard_bloc.dart';
+import '../../dashboard/bloc/dashboard_event.dart';
 import '../bloc/chat_bloc.dart';
 import '../bloc/chat_event.dart';
 import '../bloc/chat_state.dart';
@@ -20,11 +22,23 @@ import '../widgets/media_viewers.dart';
 class ChatPage extends StatefulWidget {
   final UserModel user;
   final String currentUserId;
-  const ChatPage({super.key, required this.user, required this.currentUserId});
+  /// Shared socket from DashboardPage — ChatPage MUST NOT disconnect it.
+  final SocketService socket;
+  /// Reference to DashboardBloc so user:status events update the user list too.
+  final DashboardBloc dashboardBloc;
+
+  const ChatPage({
+    super.key,
+    required this.user,
+    required this.currentUserId,
+    required this.socket,
+    required this.dashboardBloc,
+  });
   @override State<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends State<ChatPage> {
+  // We use the shared socket from DashboardPage — never create a new one here
   late final SocketService _socket;
   late final ChatBloc _bloc;
   final _apiClient = ApiClient();
@@ -33,9 +47,13 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
   String? _token;
   String? _currentUserName;
+  /// Live-updated version of the chat partner (status changes update this)
+  late UserModel _chatUser;
 
   @override void initState() {
     super.initState();
+    _chatUser = widget.user;
+    _socket = widget.socket;
     SecureStorageService().getToken().then((val) {
       if (mounted) setState(() => _token = val);
     });
@@ -51,26 +69,64 @@ class _ChatPageState extends State<ChatPage> {
         } catch (_) {}
       }
     });
-    _socket = SocketService();
     _bloc = ChatBloc(
       repository: MessageRepository(),
       socket: _socket,
       userId: widget.currentUserId,
       otherUserId: widget.user.id,
     )..add(const ChatStarted());
-    _connectSocket();
+    _registerSocketCallbacks();
   }
 
-  Future<void> _connectSocket() async {
-    await _socket.connect(
-      onUserStatus: ({required String userId, required String status, String? lastSeenAt}) {},
-      onMessage: (json) {
-        _bloc.add(ChatMessageReceived(MessageModel.fromJson(json)));
-        if (_scrollController.hasClients && _scrollController.offset < 80) {
-          _scrollToBottom();
-        }
-      },
-    );
+  /// Register this page's callbacks on the already-connected shared socket.
+  /// The socket is shared with DashboardPage — we only ADD our callbacks here
+  /// and never call connect() or disconnect().
+  void _registerSocketCallbacks() {
+    _socket.addOnMessage((json) {
+      if (!mounted) return;
+      final msg = MessageModel.fromJson(json);
+      _bloc.add(ChatMessageReceived(msg));
+      // Forward to DashboardBloc so its user list / unread logic stays in sync
+      final createdAt = json['createdAt']?.toString() ?? '';
+      final senderId = json['senderId']?.toString() ?? '';
+      final receiverId = json['receiverId']?.toString() ?? '';
+      if (senderId.isNotEmpty && receiverId.isNotEmpty && createdAt.isNotEmpty) {
+        widget.dashboardBloc.add(DashboardPrivateMessageReceived(
+          senderId: senderId,
+          receiverId: receiverId,
+          createdAt: createdAt,
+          isIncoming: receiverId == widget.currentUserId,
+        ));
+      }
+      if (_scrollController.hasClients && _scrollController.offset < 80) {
+        _scrollToBottom();
+      }
+    });
+
+    _socket.addOnUserStatus(({required String userId, required String status, String? lastSeenAt}) {
+      if (!mounted) return;
+      // Update the live chat header if this is about our chat partner
+      if (userId == widget.user.id) {
+        setState(() {
+          _chatUser = UserModel(
+            id: _chatUser.id,
+            name: _chatUser.name,
+            username: _chatUser.username,
+            phone: _chatUser.phone,
+            status: status,
+            lastSeenAt: lastSeenAt ?? _chatUser.lastSeenAt,
+            latestMessageAt: _chatUser.latestMessageAt,
+            unreadCount: _chatUser.unreadCount,
+          );
+        });
+      }
+      // Always forward to DashboardBloc so the user list stays current
+      widget.dashboardBloc.add(DashboardUserStatusChanged(
+        userId: userId,
+        status: status,
+        lastSeenAt: lastSeenAt,
+      ));
+    });
   }
 
   void _scrollToBottom() {
@@ -88,7 +144,10 @@ class _ChatPageState extends State<ChatPage> {
   @override void dispose() {
     _controller.dispose();
     _scrollController.dispose();
-    _socket.disconnect();
+    // Remove our callbacks from the shared socket but DO NOT disconnect it —
+    // the socket belongs to DashboardPage and must remain alive.
+    _socket.removeOnMessage();
+    _socket.removeOnUserStatus();
     _bloc.close();
     super.dispose();
   }
@@ -417,9 +476,10 @@ class _ChatPageState extends State<ChatPage> {
 
   @override Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isOnline = widget.user.status == 'online';
-    final initial = widget.user.name.isNotEmpty ? widget.user.name[0].toUpperCase() : '?';
-    final gradient = AppTheme.getAvatarGradient(widget.user.id.isNotEmpty ? widget.user.id : widget.user.name);
+    // Use _chatUser (updated in real-time by socket) instead of immutable widget.user
+    final isOnline = _chatUser.status == 'online';
+    final initial = _chatUser.name.isNotEmpty ? _chatUser.name[0].toUpperCase() : '?';
+    final gradient = AppTheme.getAvatarGradient(_chatUser.id.isNotEmpty ? _chatUser.id : _chatUser.name);
 
     return BlocProvider.value(
       value: _bloc,

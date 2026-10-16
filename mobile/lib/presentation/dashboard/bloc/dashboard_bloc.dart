@@ -17,6 +17,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardUserStatusChanged>(_onStatusChanged);
     on<DashboardPrivateMessageReceived>(_onPrivateMessageReceived);
     on<DashboardUnreadCountReconciled>(_onUnreadCountReconciled);
+    on<DashboardOpenChatChanged>(_onOpenChatChanged);
   }
 
   Future<void> _onStarted(DashboardStarted event, Emitter<DashboardState> emit) async {
@@ -61,7 +62,8 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
 
     final incomingBySender = <String, int>{};
     for (final event in pending) {
-      if (event.isIncoming) {
+      // Don't increment unread for the chat that's currently open
+      if (event.isIncoming && event.senderId != state.openChatUserId) {
         incomingBySender[event.senderId] =
             (incomingBySender[event.senderId] ?? 0) + 1;
       }
@@ -118,6 +120,15 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       return;
     }
 
+    // Determine the "other" user's id from our perspective
+    // isIncoming=true  → senderId is the other user
+    // isIncoming=false → receiverId is the other user (we sent it)
+    final otherUserId = event.isIncoming ? event.senderId : event.receiverId;
+
+    // If the chat for this user is currently open, the user is actively reading
+    // — do NOT increment the unread badge, just update latestMessageAt.
+    final chatIsOpen = state.openChatUserId == otherUserId;
+
     final users = state.users.map((user) {
       if (user.id == event.senderId) {
         return UserModel(
@@ -128,7 +139,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           status: user.status,
           lastSeenAt: user.lastSeenAt,
           latestMessageAt: event.createdAt,
-          unreadCount: event.isIncoming
+          unreadCount: (event.isIncoming && !chatIsOpen)
               ? user.unreadCount + 1
               : user.unreadCount,
         );
@@ -151,9 +162,38 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }).toList();
 
     emit(state.copyWith(users: users));
-    if (event.isIncoming) {
+    // Only reconcile with server when a badge was actually incremented
+    if (event.isIncoming && !chatIsOpen) {
       _reconcileUnreadCount(event.senderId);
     }
+  }
+
+  /// Called when the user opens or closes a chat screen.
+  void _onOpenChatChanged(DashboardOpenChatChanged event, Emitter<DashboardState> emit) {
+    final openUserId = event.openUserId;
+
+    if (openUserId == null) {
+      // Chat closed — clear the tracking so future messages behave normally
+      emit(state.copyWith(clearOpenChatUserId: true));
+      return;
+    }
+
+    // Chat opened — zero out the unread count for this user immediately
+    final users = state.users.map((user) {
+      if (user.id != openUserId) return user;
+      return UserModel(
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        phone: user.phone,
+        status: user.status,
+        lastSeenAt: user.lastSeenAt,
+        latestMessageAt: user.latestMessageAt,
+        unreadCount: 0,
+      );
+    }).toList();
+
+    emit(state.copyWith(users: users, openChatUserId: openUserId));
   }
 
   Future<void> _reconcileUnreadCount(String senderId) async {
@@ -182,6 +222,10 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) {
     if (isClosed) return;
+
+    // Don't overwrite the unread count if the chat is currently open
+    // (it was already zeroed out by _onOpenChatChanged)
+    if (state.openChatUserId == event.user.id) return;
 
     final users = state.users.map((user) {
       if (user.id != event.user.id) return user;

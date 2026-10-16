@@ -40,6 +40,10 @@ class _DashboardPageState extends State<DashboardPage> {
         }
       },
       onMessage: (message) {
+        // While a chat is open, ChatPage's secondary callback handles forwarding
+        // messages to DashboardBloc. Skip here to avoid double-dispatching.
+        if (_bloc.state.openChatUserId != null) return;
+
         final senderId = message['senderId']?.toString();
         final receiverId = message['receiverId']?.toString();
         final createdAt = message['createdAt']?.toString();
@@ -63,13 +67,23 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openChat(UserModel user, String currentUserId) async {
+    // Tell the bloc the chat is open so unread badges are suppressed
+    _bloc.add(DashboardOpenChatChanged(user.id));
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ChatPage(user: user, currentUserId: currentUserId),
+        builder: (_) => ChatPage(
+          user: user,
+          currentUserId: currentUserId,
+          socket: _socket,
+          dashboardBloc: _bloc,
+        ),
       ),
     );
+    // Chat closed — re-enable unread tracking and refresh user list
     if (mounted) {
-      _bloc.add(const DashboardUsersRefreshRequested());
+      _bloc
+        ..add(const DashboardOpenChatChanged(null))
+        ..add(const DashboardUsersRefreshRequested());
     }
   }
 
