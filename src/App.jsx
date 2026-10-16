@@ -240,10 +240,20 @@ function App() {
         if (cancelled) return
 
         setMessages((current) => {
+          const incoming = data.messages || []
           const byId = new Map(current.map((item) => [item.id, item]))
 
-          for (const item of data.messages || []) {
-            byId.set(item.id, item)
+          let hasNewOrChanged = false
+          for (const item of incoming) {
+            const existing = byId.get(item.id)
+            if (!existing || existing.createdAt !== item.createdAt || existing.mediaUrl !== item.mediaUrl) {
+              hasNewOrChanged = true
+              byId.set(item.id, item)
+            }
+          }
+
+          if (!hasNewOrChanged && byId.size === current.length) {
+            return current
           }
 
           const next = [...byId.values()].sort(
@@ -308,7 +318,15 @@ function App() {
 
         if (!cancelled && requestId === conversationRequestRef.current) {
           const freshMessages = data.messages || []
-          setMessages(freshMessages)
+          setMessages((current) => {
+            if (
+              current.length === freshMessages.length &&
+              current.every((item, idx) => item.id === freshMessages[idx]?.id)
+            ) {
+              return current
+            }
+            return freshMessages
+          })
           setConversationCache((current) => ({
             ...current,
             [conversationId]: freshMessages,

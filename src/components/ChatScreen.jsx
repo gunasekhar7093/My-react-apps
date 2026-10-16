@@ -52,6 +52,7 @@ export default function ChatScreen({
   const initializedMessagesRef = useRef(false)
   const previousMessageCountRef = useRef(0)
   const initialScrollRef = useRef(true)
+  const isNearBottomRef = useRef(true)
 
   const [animatedMessageIds, setAnimatedMessageIds] = useState(new Set())
   const [selectedFile, setSelectedFile] = useState(null)
@@ -142,35 +143,65 @@ export default function ChatScreen({
     initializedMessagesRef.current = false
     previousMessageCountRef.current = 0
     initialScrollRef.current = true
+    isNearBottomRef.current = true
     setAnimatedMessageIds(new Set())
     setSelectedFile(null)
     setFilePreview(null)
   }, [selectedUser?.id])
 
+  const handleScroll = () => {
+    const container = chatBodyRef.current
+    if (!container) return
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    isNearBottomRef.current = distanceFromBottom < 120
+  }
+
   useEffect(() => {
     if (!chatBodyRef.current || chatLoading) return
 
     const container = chatBodyRef.current
-    const messageCountChanged = messages.length !== previousMessageCountRef.current
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    const isNearBottom = distanceFromBottom < 120
 
-    requestAnimationFrame(() => {
-      if (!container) return
+    // Case 1: Initial conversation open / first load with messages
+    if (initialScrollRef.current) {
+      if (messages.length > 0) {
+        requestAnimationFrame(() => {
+          if (!container) return
+          container.scrollTop = container.scrollHeight
+          initialScrollRef.current = false
+          previousMessageCountRef.current = messages.length
+          isNearBottomRef.current = true
+        })
+      }
+      return
+    }
 
-      if (initialScrollRef.current || !messageCountChanged) {
-        container.scrollTop = container.scrollHeight
-      } else if (isNearBottom) {
+    const previousCount = previousMessageCountRef.current
+    const currentCount = messages.length
+
+    // Always update recorded message count
+    previousMessageCountRef.current = currentCount
+
+    // If message count did not increase (e.g. background sync or re-render), never auto-scroll
+    if (currentCount <= previousCount) {
+      return
+    }
+
+    // Case 2: New message(s) arrived
+    const latestMessage = messages[messages.length - 1]
+    const isSentByMe = latestMessage?.senderId === user?.id
+
+    // Only scroll to bottom if the current user sent the message or was already near the bottom
+    if (isSentByMe || isNearBottomRef.current) {
+      requestAnimationFrame(() => {
+        if (!container) return
         container.scrollTo({
           top: container.scrollHeight,
           behavior: 'smooth',
         })
-      }
-
-      previousMessageCountRef.current = messages.length
-      initialScrollRef.current = false
-    })
-  }, [messages, chatLoading, selectedUser?.id])
+        isNearBottomRef.current = true
+      })
+    }
+  }, [messages, chatLoading, selectedUser?.id, user?.id])
 
   function handleFileSelect(e) {
     const file = e.target.files?.[0]
@@ -236,7 +267,7 @@ export default function ChatScreen({
         <div className={socketConnected ? 'connection-status online chat-connection' : 'connection-status chat-connection'}><i />{socketConnected ? 'Connected' : 'Connecting'}</div>
       </header>
 
-      <section className="chat-body" ref={chatBodyRef}>
+      <section className="chat-body" ref={chatBodyRef} onScroll={handleScroll}>
         {notice && <div className="chat-notice">{notice}</div>}
         {chatLoading ? (
           <div className="empty-chat"><div className="chat-loading-dot" /><span>Loading conversation…</span></div>
