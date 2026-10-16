@@ -901,22 +901,26 @@ class _DateBadge extends StatelessWidget {
         ? 'Today'
         : isYesterday
             ? 'Yesterday'
-            : DateFormat('MMMM d, yyyy').format(date);
+            : DateFormat('dd/MM/yyyy').format(date);
 
     return Center(
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 14),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(16),
+          color: theme.brightness == Brightness.dark
+              ? theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.6)
+              : const Color(0xFFEEF0F5),
+          borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
+            color: theme.brightness == Brightness.dark
+                ? theme.colorScheme.onSurfaceVariant
+                : const Color(0xFF7B8494),
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
@@ -954,7 +958,10 @@ class _Bubble extends StatelessWidget {
                 ? '${ApiConstants.baseUrl}$mediaUrl'
                 : '${ApiConstants.baseUrl}/$mediaUrl'))
         : '';
-    final fullMediaUrl = baseMediaUrl.isNotEmpty && token != null && token!.isNotEmpty && !baseMediaUrl.contains('token=')
+    final fullMediaUrl = baseMediaUrl.isNotEmpty &&
+            token != null &&
+            token!.isNotEmpty &&
+            !baseMediaUrl.contains('token=')
         ? (baseMediaUrl.contains('?') ? '$baseMediaUrl&token=$token' : '$baseMediaUrl?token=$token')
         : baseMediaUrl;
 
@@ -965,7 +972,7 @@ class _Bubble extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 6),
         padding: hasMedia
             ? const EdgeInsets.all(5)
-            : const EdgeInsets.fromLTRB(14, 8, 12, 7),
+            : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           gradient: mine
               ? const LinearGradient(
@@ -974,156 +981,249 @@ class _Bubble extends StatelessWidget {
                   end: Alignment.bottomRight,
                 )
               : null,
-          color: mine ? null : theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.8),
+          color: mine
+              ? null
+              : (theme.brightness == Brightness.dark
+                  ? theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.8)
+                  : Colors.white),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
             bottomLeft: Radius.circular(mine ? 16 : 4),
             bottomRight: Radius.circular(mine ? 4 : 16),
           ),
+          border: mine
+              ? null
+              : Border.all(
+                  color: theme.brightness == Brightness.dark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : const Color(0xFFE6E8EE),
+                  width: 1,
+                ),
           boxShadow: [
             BoxShadow(
               color: mine
                   ? AppTheme.primaryColor.withValues(alpha: 0.16)
-                  : Colors.black.withValues(alpha: 0.04),
+                  : Colors.black.withValues(alpha: 0.03),
               blurRadius: 4,
               offset: const Offset(0, 1.5),
             ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Media Content (Image or Video)
-            if (hasMedia) ...[
-              if (message.isVideo)
-                VideoPlayerBubble(
+        child: hasMedia
+            ? _buildMediaBubble(context, theme, fullMediaUrl)
+            : _buildTextBubble(context, theme, maxWidth - 24),
+      ),
+    );
+  }
+
+  Widget _buildTextBubble(BuildContext context, ThemeData theme, double contentMaxWidth) {
+    final textColor = mine ? Colors.white : theme.colorScheme.onSurface;
+    final textStyle = TextStyle(
+      color: textColor,
+      fontSize: 14,
+      height: 1.35,
+      letterSpacing: 0.1,
+    );
+
+    final timeWidget = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (time.isNotEmpty)
+          Text(
+            time,
+            style: TextStyle(
+              color: mine
+                  ? Colors.white.withValues(alpha: 0.72)
+                  : (theme.brightness == Brightness.dark
+                      ? Colors.white54
+                      : const Color(0xFF9AA2B1)),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        if (mine) ...[
+          const SizedBox(width: 3.5),
+          Icon(
+            Icons.done_all_rounded,
+            size: 13,
+            color: Colors.white.withValues(alpha: 0.85),
+          ),
+        ],
+      ],
+    );
+
+    // Measure text to decide whether it fits inline with time (compact pill matching web)
+    final direction = Directionality.of(context);
+    final textSpan = TextSpan(text: message.text, style: textStyle);
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: direction,
+    )..layout(maxWidth: contentMaxWidth);
+
+    final timeSpan = TextSpan(
+      text: '$time ${mine ? "   " : ""}',
+      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
+    );
+    final timePainter = TextPainter(
+      text: timeSpan,
+      textDirection: direction,
+    )..layout();
+    final timeWidth = timePainter.width + (mine ? 18 : 6);
+
+    final lineMetrics = textPainter.computeLineMetrics();
+    final isSingleLine = lineMetrics.length <= 1;
+    final fitsInline = textPainter.width + 10 + timeWidth <= contentMaxWidth;
+
+    if (isSingleLine && fitsInline) {
+      // Single line text: compact inline pill taking only necessary space
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(message.text, style: textStyle),
+          const SizedBox(width: 10),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 0.5),
+            child: timeWidget,
+          ),
+        ],
+      );
+    }
+
+    // Multi-line: Hug the text width instead of stretching across the screen
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(message.text, style: textStyle),
+        const SizedBox(height: 2),
+        timeWidget,
+      ],
+    );
+  }
+
+  Widget _buildMediaBubble(BuildContext context, ThemeData theme, String fullMediaUrl) {
+    final textColor = mine ? Colors.white : theme.colorScheme.onSurface;
+    final textStyle = TextStyle(
+      color: textColor,
+      fontSize: 14,
+      height: 1.35,
+      letterSpacing: 0.1,
+    );
+
+    final timeWidget = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (time.isNotEmpty)
+          Text(
+            time,
+            style: TextStyle(
+              color: mine
+                  ? Colors.white.withValues(alpha: 0.72)
+                  : (theme.brightness == Brightness.dark
+                      ? Colors.white54
+                      : const Color(0xFF9AA2B1)),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        if (mine) ...[
+          const SizedBox(width: 3.5),
+          Icon(
+            Icons.done_all_rounded,
+            size: 13,
+            color: Colors.white.withValues(alpha: 0.85),
+          ),
+        ],
+      ],
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (message.isVideo)
+          VideoPlayerBubble(
+            videoUrl: fullMediaUrl,
+            filename: message.mediaName,
+            fileSize: message.mediaSize,
+            onTap: () {
+              Navigator.of(context).push(
+                FullScreenVideoViewer.route(
                   videoUrl: fullMediaUrl,
-                  filename: message.mediaName,
-                  fileSize: message.mediaSize,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      FullScreenVideoViewer.route(
-                        videoUrl: fullMediaUrl,
-                        title: message.mediaName,
-                        senderName: senderName,
-                        senderId: message.senderId,
-                        timestamp: message.createdAt,
-                        caption: message.text,
-                        avatarInitial: avatarInitial,
-                      ),
-                    );
-                  },
-                )
-              else
-                GestureDetector(
-                  onTap: () {
-                    Navigator.of(context).push(
-                      FullScreenImageViewer.route(
-                        imageUrl: fullMediaUrl,
-                        title: message.mediaName,
-                        heroTag: 'media_${message.id}',
-                        senderName: senderName,
-                        senderId: message.senderId,
-                        timestamp: message.createdAt,
-                        caption: message.text,
-                        avatarInitial: avatarInitial,
-                      ),
-                    );
-                  },
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Hero(
-                      tag: 'media_${message.id}',
-                      child: Image.network(
-                        fullMediaUrl,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: 200,
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return Container(
-                            height: 180,
-                            color: Colors.black12,
-                            child: const Center(
-                              child: SizedBox(
-                                width: 28,
-                                height: 28,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          height: 140,
-                          color: Colors.black12,
-                          child: const Center(
-                            child: Icon(Icons.broken_image_rounded, size: 40, color: Colors.grey),
-                          ),
+                  title: message.mediaName,
+                  senderName: senderName,
+                  senderId: message.senderId,
+                  timestamp: message.createdAt,
+                  caption: message.text,
+                  avatarInitial: avatarInitial,
+                ),
+              );
+            },
+          )
+        else
+          GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                FullScreenImageViewer.route(
+                  imageUrl: fullMediaUrl,
+                  title: message.mediaName,
+                  heroTag: 'media_${message.id}',
+                  senderName: senderName,
+                  senderId: message.senderId,
+                  timestamp: message.createdAt,
+                  caption: message.text,
+                  avatarInitial: avatarInitial,
+                ),
+              );
+            },
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Hero(
+                tag: 'media_${message.id}',
+                child: Image.network(
+                  fullMediaUrl,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: 200,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      height: 180,
+                      color: Colors.black12,
+                      child: const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 140,
+                    color: Colors.black12,
+                    child: const Center(
+                      child: Icon(Icons.broken_image_rounded, size: 40, color: Colors.grey),
                     ),
                   ),
                 ),
-            ],
-
-            // Caption or Text
-            if (message.text.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  hasMedia ? 8 : 0,
-                  hasMedia ? 6 : 0,
-                  hasMedia ? 8 : 0,
-                  0,
-                ),
-                child: Text(
-                  message.text,
-                  style: TextStyle(
-                    color: mine ? Colors.white : theme.colorScheme.onSurface,
-                    fontSize: 15,
-                    height: 1.3,
-                  ),
-                ),
-              ),
-
-            // Time & Ticks Row
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                hasMedia ? 8 : 0,
-                4,
-                hasMedia ? 6 : 0,
-                hasMedia ? 4 : 0,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (time.isNotEmpty)
-                    Text(
-                      time,
-                      style: TextStyle(
-                        color: mine
-                            ? Colors.white.withValues(alpha: 0.75)
-                            : theme.colorScheme.onSurfaceVariant,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  if (mine) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.done_all_rounded,
-                      size: 13,
-                      color: Colors.white.withValues(alpha: 0.85),
-                    ),
-                  ],
-                ],
               ),
             ),
-          ],
+          ),
+        if (message.text.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+            child: Text(message.text, style: textStyle),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 3, 6, 4),
+          child: timeWidget,
         ),
-      ),
+      ],
     );
   }
 }
