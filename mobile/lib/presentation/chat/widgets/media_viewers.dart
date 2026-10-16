@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
@@ -8,7 +9,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../../core/theme/app_theme.dart';
 
-/// Helper to download media file to device Downloads/Documents directory.
+/// Helper to download media file and save directly to device Gallery & Google Photos.
 Future<void> _downloadMediaFile({
   required BuildContext context,
   required String url,
@@ -16,12 +17,23 @@ Future<void> _downloadMediaFile({
   required bool isVideo,
 }) async {
   try {
+    // 1. Check or request gallery permissions using Gal
+    final hasAccess = await Gal.hasAccess();
+    if (!hasAccess) {
+      final granted = await Gal.requestAccess();
+      if (!granted) {
+        throw Exception('Permission to access photo gallery was denied.');
+      }
+    }
+
+    // 2. Fetch the file bytes from URL
     final uri = Uri.parse(url);
     final response = await http.get(uri);
     if (response.statusCode != 200) {
       throw Exception('Server returned status code ${response.statusCode}');
     }
 
+    // 3. Determine clean filename
     final ext = isVideo ? 'mp4' : 'jpg';
     String cleanName = (filename != null && filename.trim().isNotEmpty)
         ? filename.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
@@ -32,35 +44,39 @@ Future<void> _downloadMediaFile({
       cleanName = '$cleanName.$ext';
     }
 
-    Directory? targetDir;
-    if (Platform.isAndroid) {
-      final androidDownload = Directory('/storage/emulated/0/Download');
-      if (await androidDownload.exists()) {
-        targetDir = androidDownload;
+    // 4. Save to temporary directory first
+    final tempDir = await getTemporaryDirectory();
+    final tempFilePath = '${tempDir.path}/$cleanName';
+    final tempFile = File(tempFilePath);
+    await tempFile.writeAsBytes(response.bodyBytes);
+
+    // 5. Register with native Android/iOS MediaStore & save into device Gallery / Google Photos
+    if (isVideo) {
+      await Gal.putVideo(tempFilePath, album: 'ChatSpace');
+    } else {
+      await Gal.putImage(tempFilePath, album: 'ChatSpace');
+    }
+
+    // 6. Also keep a copy in system Downloads folder on Android for Files app access
+    try {
+      if (Platform.isAndroid) {
+        final downloadDir = Directory('/storage/emulated/0/Download');
+        if (await downloadDir.exists()) {
+          final downloadFilePath = '${downloadDir.path}/$cleanName';
+          final downloadFile = File(downloadFilePath);
+          if (!await downloadFile.exists()) {
+            await downloadFile.writeAsBytes(response.bodyBytes);
+          }
+        }
       }
-    }
+    } catch (_) {}
 
-    if (targetDir == null) {
-      try {
-        targetDir = await getDownloadsDirectory();
-      } catch (_) {}
-    }
-
-    targetDir ??= await getApplicationDocumentsDirectory();
-
-    String finalPath = '${targetDir.path}/$cleanName';
-    int counter = 1;
-    final dotIndex = cleanName.lastIndexOf('.');
-    final baseName = dotIndex != -1 ? cleanName.substring(0, dotIndex) : cleanName;
-    final extension = dotIndex != -1 ? cleanName.substring(dotIndex) : '.$ext';
-
-    while (await File(finalPath).exists()) {
-      finalPath = '${targetDir.path}/${baseName}_$counter$extension';
-      counter++;
-    }
-
-    final savedFile = File(finalPath);
-    await savedFile.writeAsBytes(response.bodyBytes);
+    // 7. Clean up temporary cache file
+    try {
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+    } catch (_) {}
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -71,7 +87,9 @@ Future<void> _downloadMediaFile({
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Saved: ${savedFile.path.split(Platform.pathSeparator).last}',
+                  isVideo
+                      ? 'Video saved to Gallery & Google Photos!'
+                      : 'Photo saved to Gallery & Google Photos!',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
@@ -82,6 +100,29 @@ Future<void> _downloadMediaFile({
           backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  } on GalException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Gallery error: ${e.type.message}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
