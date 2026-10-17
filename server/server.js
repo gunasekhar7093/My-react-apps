@@ -993,20 +993,54 @@ io.on('connection', async (socket) => {
           preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
         } else if (mediaType === 'image') {
           preview = `📷 ${preview}`
+        } else if (mediaType === 'video') {
+          preview = `🎥 ${preview}`
         }
 
-        console.log(`[FCM] Dispatching push notification to ${receiverId} (${senderName}: ${preview})`)
+        // Query all unread messages from this sender to recipient so multiple messages are accumulated
+        const unreadMessages = await messagesCollection
+          .find({
+            senderId: userId,
+            receiverId,
+            $or: [{ readAt: null }, { readAt: { $exists: false } }],
+          })
+          .sort({ createdAt: 1 })
+          .toArray()
+
+        const unreadCount = Math.max(unreadMessages.length, 1)
+        const unreadLines = unreadMessages.slice(-6).map((m) => {
+          let txt = m.text || ''
+          if (!txt && m.mediaType) {
+            txt = m.mediaType === 'image' ? '📷 Photo' : m.mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
+          } else if (m.mediaType === 'image') {
+            txt = `📷 ${txt}`
+          } else if (m.mediaType === 'video') {
+            txt = `🎥 ${txt}`
+          }
+          return txt
+        })
+
+        if (unreadLines.length === 0 && preview) {
+          unreadLines.push(preview)
+        }
+
+        const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
+        const notificationBody = unreadLines.join('\n')
+
+        console.log(`[FCM] Dispatching push to ${receiverId} (${notificationTitle}: ${unreadLines.length} lines)`)
         firebaseMessaging.send({
           token: receiver.fcmToken,
           notification: {
-            title: senderName,
-            body: preview,
+            title: notificationTitle,
+            body: notificationBody,
           },
           data: {
             senderId: userId,
             senderName,
             messageId: message.id,
             text: preview,
+            unreadCount: String(unreadCount),
+            unreadLines: JSON.stringify(unreadLines),
             type: 'chat_message',
           },
           android: {
@@ -1015,6 +1049,7 @@ io.on('connection', async (socket) => {
               channelId: 'chatspace_messages_channel',
               sound: 'default',
               tag: userId,
+              notificationCount: unreadCount,
             },
           },
         }).then((response) => {

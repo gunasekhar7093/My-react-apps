@@ -103,35 +103,74 @@ class NotificationService {
     }
   }
 
-  /// Display a WhatsApp-like heads-up system notification for an incoming message.
+  final Map<String, List<String>> _senderMessages = {};
+  final Map<String, String> _senderNames = {};
+
+  String _formatPreview(String messageText, String? mediaType) {
+    String text = messageText.trim();
+    if (text.isEmpty && mediaType != null) {
+      if (mediaType == 'image') {
+        text = '📷 Photo';
+      } else if (mediaType == 'video') {
+        text = '🎥 Video';
+      } else {
+        text = '📁 Attachment';
+      }
+    } else if (mediaType != null && mediaType.isNotEmpty) {
+      if (mediaType == 'image') {
+        text = '📷 $text';
+      } else if (mediaType == 'video') {
+        text = '🎥 $text';
+      }
+    }
+    return text.isEmpty ? 'New message' : text;
+  }
+
+  /// Display a WhatsApp-like multi-line system notification for incoming messages.
   Future<void> showMessageNotification({
     required String senderId,
     required String senderName,
     required String messageText,
     String? mediaType,
+    List<String>? historicalLines,
   }) async {
     try {
       if (!_initialized) {
         await initialize();
       }
 
-      // Format preview like WhatsApp: if media, show icon indicator
-      String bodyText = messageText.trim();
-      if (bodyText.isEmpty && mediaType != null) {
-        if (mediaType == 'image') {
-          bodyText = '📷 Photo';
-        } else if (mediaType == 'video') {
-          bodyText = '🎥 Video';
-        } else {
-          bodyText = '📁 Attachment';
-        }
-      } else if (mediaType != null && mediaType.isNotEmpty) {
-        if (mediaType == 'image') {
-          bodyText = '📷 $bodyText';
-        } else if (mediaType == 'video') {
-          bodyText = '🎥 $bodyText';
-        }
+      _senderNames[senderId] = senderName;
+
+      final preview = _formatPreview(messageText, mediaType);
+      final messages = _senderMessages.putIfAbsent(senderId, () => []);
+
+      if (historicalLines != null && historicalLines.isNotEmpty) {
+        messages
+          ..clear()
+          ..addAll(historicalLines);
+      } else {
+        messages.add(preview);
       }
+
+      if (messages.length > 7) {
+        messages.removeRange(0, messages.length - 7);
+      }
+
+      final count = messages.length;
+      final title = count > 1 ? '$senderName ($count messages)' : senderName;
+      final bodyText = count > 1 ? messages.join('\n') : messages.last;
+
+      final StyleInformation styleInformation = count > 1
+          ? InboxStyleInformation(
+              messages,
+              contentTitle: title,
+              summaryText: '$count new messages',
+            )
+          : BigTextStyleInformation(
+              bodyText,
+              contentTitle: senderName,
+              summaryText: 'ChatSpace',
+            );
 
       final androidDetails = AndroidNotificationDetails(
         _channelId,
@@ -143,11 +182,8 @@ class NotificationService {
         enableVibration: true,
         category: AndroidNotificationCategory.message,
         tag: senderId,
-        styleInformation: BigTextStyleInformation(
-          bodyText,
-          contentTitle: senderName,
-          summaryText: 'ChatSpace',
-        ),
+        number: count,
+        styleInformation: styleInformation,
       );
 
       const darwinDetails = DarwinNotificationDetails(
@@ -166,7 +202,7 @@ class NotificationService {
 
       await _notificationsPlugin.show(
         id: notifId,
-        title: senderName,
+        title: title,
         body: bodyText,
         notificationDetails: details,
         payload: senderId,
@@ -180,6 +216,8 @@ class NotificationService {
   /// (both local notifications and background Firebase notifications)
   Future<void> cancelSenderNotification(String senderId) async {
     if (senderId.isEmpty) return;
+    _senderMessages.remove(senderId);
+    _senderNames.remove(senderId);
     final notifId = (senderId.hashCode & 0x7FFFFFFF);
     try {
       await _notificationsPlugin.cancel(id: notifId, tag: senderId);
@@ -196,6 +234,8 @@ class NotificationService {
 
   /// Dismisses all notifications currently showing for this app
   Future<void> cancelAllNotifications() async {
+    _senderMessages.clear();
+    _senderNames.clear();
     try {
       await _notificationsPlugin.cancelAll();
     } catch (_) {}

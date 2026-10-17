@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -27,11 +28,24 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       final senderId = message.data['senderId']?.toString() ?? '';
       final senderName = message.data['senderName']?.toString() ?? 'User';
       final text = message.data['text']?.toString() ?? message.data['preview']?.toString() ?? '';
+
+      List<String>? historicalLines;
+      final rawLines = message.data['unreadLines']?.toString();
+      if (rawLines != null && rawLines.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(rawLines);
+          if (decoded is List) {
+            historicalLines = decoded.map((e) => e.toString()).toList();
+          }
+        } catch (_) {}
+      }
+
       if (senderId.isNotEmpty) {
         await NotificationService().showMessageNotification(
           senderId: senderId,
           senderName: senderName,
           messageText: text,
+          historicalLines: historicalLines,
         );
       }
     }
@@ -83,11 +97,23 @@ class FcmService {
         final senderName = notification?.title ?? message.data['senderName']?.toString() ?? 'User';
         final body = notification?.body ?? message.data['text']?.toString() ?? '';
 
+        List<String>? historicalLines;
+        final rawLines = message.data['unreadLines']?.toString();
+        if (rawLines != null && rawLines.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(rawLines);
+            if (decoded is List) {
+              historicalLines = decoded.map((e) => e.toString()).toList();
+            }
+          } catch (_) {}
+        }
+
         if (senderId.isNotEmpty) {
           NotificationService().showMessageNotification(
             senderId: senderId,
             senderName: senderName,
             messageText: body,
+            historicalLines: historicalLines,
           );
         }
       });
