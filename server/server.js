@@ -3,29 +3,38 @@ import cors from 'cors'
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
 import { Server as SocketIOServer } from 'socket.io'
 import { MongoClient, GridFSBucket, ObjectId } from 'mongodb'
 import multer from 'multer'
-import admin from 'firebase-admin'
+import { initializeApp, cert } from 'firebase-admin/app'
+import { getMessaging } from 'firebase-admin/messaging'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ── Firebase Admin SDK (Cloud Push Notifications when app is closed) ─────────
-let firebaseAdminReady = false
+let firebaseMessaging = null
 try {
-  const serviceAccountPath = path.resolve('firebase-service-account.json')
-  if (fs.existsSync(serviceAccountPath)) {
+  const possiblePaths = [
+    path.join(__dirname, 'firebase-service-account.json'),
+    path.resolve('firebase-service-account.json'),
+    path.resolve('server/firebase-service-account.json'),
+  ]
+  const serviceAccountPath = possiblePaths.find((p) => fs.existsSync(p))
+  if (serviceAccountPath) {
     const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'))
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    const app = initializeApp({
+      credential: cert(serviceAccount),
     })
-    firebaseAdminReady = true
-    console.log('Firebase Admin initialized successfully from service account file.')
+    firebaseMessaging = getMessaging(app)
+    console.log(`Firebase Admin initialized successfully from: ${serviceAccountPath}`)
   } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    const app = initializeApp({
+      credential: cert(serviceAccount),
     })
-    firebaseAdminReady = true
+    firebaseMessaging = getMessaging(app)
     console.log('Firebase Admin initialized successfully from environment variable.')
   } else {
     console.log('No firebase-service-account.json found. Push notifications will be active once configured.')
@@ -849,7 +858,7 @@ io.on('connection', async (socket) => {
       io.to(receiverId).emit('private:message', message)
 
       // ── Cloud Push Notification via Firebase (for closed/background mobile app)
-      if (firebaseAdminReady && receiver?.fcmToken) {
+      if (firebaseMessaging && receiver?.fcmToken) {
         let preview = messageText
         if (!preview && mediaType) {
           preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
@@ -857,7 +866,7 @@ io.on('connection', async (socket) => {
           preview = `📷 ${preview}`
         }
 
-        admin.messaging().send({
+        firebaseMessaging.send({
           token: receiver.fcmToken,
           notification: {
             title: senderName,
