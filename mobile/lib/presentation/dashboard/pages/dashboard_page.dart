@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
-import '../../../core/services/in_app_notification.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/user_model.dart';
@@ -78,27 +77,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final text = message['text']?.toString() ?? '';
     final mediaType = message['mediaType']?.toString();
 
-    // 1. WhatsApp-like heads-up system notification
+    // WhatsApp-like heads-up system notification
     NotificationService().showMessageNotification(
       senderId: senderId,
       senderName: senderName,
       messageText: text,
       mediaType: mediaType,
     );
-
-    // 2. WhatsApp-style in-app floating banner
-    if (mounted) {
-      InAppNotification.show(
-        context: context,
-        senderId: senderId,
-        senderName: senderName,
-        messageText: text,
-        mediaType: mediaType,
-        onTap: () {
-          _openChat(user, currentUserId);
-        },
-      );
-    }
   }
 
   /// Called by Flutter when the app lifecycle changes.
