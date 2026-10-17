@@ -531,9 +531,19 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'FCM token is required' })
     }
     // Remove this token from any other user who previously logged in on this device
-    await usersCollection.updateMany({ id: { $ne: req.userId }, fcmToken: token }, { $unset: { fcmToken: '' } })
-    const result = await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: token } })
-    console.log(`[FCM] Token registered for user ${req.userId} (matched: ${result.matchedCount}, modified: ${result.modifiedCount})`)
+    await usersCollection.updateMany(
+      { id: { $ne: req.userId } },
+      { $pull: { fcmTokens: token }, $unset: { fcmToken: token } }
+    )
+    // Add token to current user's array and set latest
+    const result = await usersCollection.updateOne(
+      { id: req.userId },
+      {
+        $addToSet: { fcmTokens: token },
+        $set: { fcmToken: token },
+      }
+    )
+    console.log(`[FCM] Device token added for user ${req.userId} (matched: ${result.matchedCount}, modified: ${result.modifiedCount})`)
     res.json({ ok: true, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount })
   } catch (error) {
     console.error('Could not save FCM token:', error.message)
@@ -543,8 +553,24 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
 
 app.delete('/api/me/fcm-token', requireAuth, async (req, res) => {
   try {
-    await usersCollection.updateOne({ id: req.userId }, { $unset: { fcmToken: '' } })
-    console.log(`[FCM] Token unregistered for user ${req.userId}`)
+    const token = req.query?.token || req.body?.token
+    if (token && typeof token === 'string') {
+      await usersCollection.updateOne(
+        { id: req.userId },
+        { $pull: { fcmTokens: token } }
+      )
+      const updatedUser = await usersCollection.findOne({ id: req.userId })
+      const remainingTokens = Array.isArray(updatedUser?.fcmTokens) ? updatedUser.fcmTokens : []
+      if (remainingTokens.length > 0) {
+        await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: remainingTokens[remainingTokens.length - 1] } })
+      } else {
+        await usersCollection.updateOne({ id: req.userId }, { $unset: { fcmToken: '' } })
+      }
+      console.log(`[FCM] Specific device token removed for user ${req.userId} (remaining: ${remainingTokens.length})`)
+    } else {
+      await usersCollection.updateOne({ id: req.userId }, { $set: { fcmTokens: [] }, $unset: { fcmToken: '' } })
+      console.log(`[FCM] All tokens removed for user ${req.userId}`)
+    }
     res.json({ ok: true })
   } catch (error) {
     console.error('Could not delete FCM token:', error.message)
@@ -554,16 +580,34 @@ app.delete('/api/me/fcm-token', requireAuth, async (req, res) => {
 
 app.post('/api/logout', requireAuth, async (req, res) => {
   try {
+    const token = req.body?.token || req.query?.token
     const lastSeenAt = new Date().toISOString()
-    // Mark offline AND remove fcmToken so no push notifications are dispatched to logged-out users
-    await usersCollection.updateOne(
-      { id: req.userId },
-      {
-        $set: { status: 'offline', lastSeenAt },
-        $unset: { fcmToken: '' },
+    if (token && typeof token === 'string') {
+      await usersCollection.updateOne(
+        { id: req.userId },
+        {
+          $set: { status: 'offline', lastSeenAt },
+          $pull: { fcmTokens: token },
+        }
+      )
+      const updatedUser = await usersCollection.findOne({ id: req.userId })
+      const remainingTokens = Array.isArray(updatedUser?.fcmTokens) ? updatedUser.fcmTokens : []
+      if (remainingTokens.length > 0) {
+        await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: remainingTokens[remainingTokens.length - 1] } })
+      } else {
+        await usersCollection.updateOne({ id: req.userId }, { $unset: { fcmToken: '' } })
       }
-    )
-    console.log(`[FCM] Cleared fcmToken on logout for user ${req.userId}`)
+      console.log(`[FCM] Device token removed on logout for user ${req.userId} (remaining: ${remainingTokens.length})`)
+    } else {
+      await usersCollection.updateOne(
+        { id: req.userId },
+        {
+          $set: { status: 'offline', lastSeenAt, fcmTokens: [] },
+          $unset: { fcmToken: '' },
+        }
+      )
+      console.log(`[FCM] All tokens cleared on logout for user ${req.userId}`)
+    }
     io.emit('user:status', { userId: req.userId, status: 'offline', lastSeenAt })
     res.json({ message: 'Logout successful' })
   } catch (error) {
@@ -987,7 +1031,13 @@ io.on('connection', async (socket) => {
       io.to(receiverId).emit('private:message', message)
 
       // ── Cloud Push Notification via Firebase (for closed/background mobile app)
-      if (firebaseMessaging && receiver?.fcmToken) {
+      const rawTokens = Array.isArray(receiver.fcmTokens) ? receiver.fcmTokens : []
+      if (receiver.fcmToken && !rawTokens.includes(receiver.fcmToken)) {
+        rawTokens.push(receiver.fcmToken)
+      }
+      const receiverTokens = rawTokens.filter((t) => typeof t === 'string' && t.trim().length > 0)
+
+      if (firebaseMessaging && receiverTokens.length > 0) {
         let preview = messageText
         if (!preview && mediaType) {
           preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
@@ -1027,9 +1077,9 @@ io.on('connection', async (socket) => {
         const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
         const notificationBody = unreadLines.join('\n')
 
-        console.log(`[FCM] Dispatching push to ${receiverId} (${notificationTitle}: ${unreadLines.length} lines)`)
-        firebaseMessaging.send({
-          token: receiver.fcmToken,
+        console.log(`[FCM] Dispatching multicast push to ${receiverTokens.length} device(s) for user ${receiverId} (${notificationTitle})`)
+        firebaseMessaging.sendEachForMulticast({
+          tokens: receiverTokens,
           notification: {
             title: notificationTitle,
             body: notificationBody,
@@ -1052,16 +1102,38 @@ io.on('connection', async (socket) => {
               notificationCount: unreadCount,
             },
           },
-        }).then((response) => {
-          console.log(`[FCM] Push delivered successfully to ${receiverId}:`, response)
+        }).then((batchResponse) => {
+          console.log(`[FCM] Multicast delivered for ${receiverId}: ${batchResponse.successCount} success, ${batchResponse.failureCount} failed out of ${receiverTokens.length} device(s)`)
+          if (batchResponse.failureCount > 0) {
+            const staleTokens = []
+            batchResponse.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                const errCode = resp.error?.code
+                if (
+                  errCode === 'messaging/registration-token-not-registered' ||
+                  errCode === 'messaging/invalid-registration-token' ||
+                  errCode === 'messaging/invalid-argument'
+                ) {
+                  staleTokens.push(receiverTokens[idx])
+                }
+              }
+            })
+            if (staleTokens.length > 0) {
+              console.log(`[FCM] Auto-removing ${staleTokens.length} stale token(s) for user ${receiverId}`)
+              usersCollection.updateOne(
+                { id: receiverId },
+                { $pull: { fcmTokens: { $in: staleTokens } } }
+              ).catch((e) => console.warn('[FCM] Stale token cleanup error:', e.message))
+            }
+          }
         }).catch((err) => {
-          console.warn('[FCM] Push notification send failed:', err.message)
+          console.warn('[FCM] Multicast dispatch failed:', err.message)
         })
       } else {
         if (!firebaseMessaging) {
           console.log('[FCM] Skipped push: Firebase Admin is not initialized on server')
-        } else if (!receiver?.fcmToken) {
-          console.log(`[FCM] Skipped push: Receiver ${receiverId} has no registered fcmToken`)
+        } else if (receiverTokens.length === 0) {
+          console.log(`[FCM] Skipped push: Receiver ${receiverId} has no registered fcmTokens`)
         }
       }
 

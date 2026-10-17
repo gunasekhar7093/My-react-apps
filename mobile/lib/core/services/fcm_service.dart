@@ -209,10 +209,19 @@ class FcmService {
   /// Prevents any notifications from arriving when logged out.
   Future<void> unregisterDeviceToken() async {
     try {
-      // 1. Unregister token on backend
+      String? token;
       try {
+        // ignore: deprecated_member_use
+        token = await FirebaseMessaging.instance.getToken();
+      } catch (_) {}
+
+      // 1. Unregister this specific device's token on backend
+      try {
+        final path = (token != null && token.isNotEmpty)
+            ? '${ApiConstants.fcmToken}?token=${Uri.encodeComponent(token)}'
+            : ApiConstants.fcmToken;
         await _apiClient.delete(
-          ApiConstants.fcmToken,
+          path,
           authenticated: true,
         );
         if (kDebugMode) print('[FCM] Server token unregistration sent');
