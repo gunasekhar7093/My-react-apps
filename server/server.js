@@ -15,6 +15,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ── Firebase Admin SDK (Cloud Push Notifications when app is closed) ─────────
 let firebaseMessaging = null
+let firebaseInitStatus = {
+  initialized: false,
+  source: null,
+  error: null,
+}
+
 try {
   const possiblePaths = [
     path.join(__dirname, 'firebase-service-account.json'),
@@ -22,25 +28,43 @@ try {
     path.resolve('server/firebase-service-account.json'),
   ]
   const serviceAccountPath = possiblePaths.find((p) => fs.existsSync(p))
+  let serviceAccount = null
+  let sourceName = null
+
   if (serviceAccountPath) {
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'))
-    const app = initializeApp({
-      credential: cert(serviceAccount),
-    })
-    firebaseMessaging = getMessaging(app)
-    console.log(`Firebase Admin initialized successfully from: ${serviceAccountPath}`)
+    sourceName = `file:${serviceAccountPath}`
+    serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'))
   } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    sourceName = 'env:FIREBASE_SERVICE_ACCOUNT'
+    let raw = process.env.FIREBASE_SERVICE_ACCOUNT.trim()
+    // Support base64 encoded JSON in environment variable
+    if (!raw.startsWith('{')) {
+      try {
+        raw = Buffer.from(raw, 'base64').toString('utf8')
+      } catch (_) {}
+    }
+    serviceAccount = JSON.parse(raw)
+  }
+
+  if (serviceAccount) {
+    // Critical: Render and cloud env vars store "\n" literally as "\\" and "n".
+    // Firebase cert requires real newline characters in private_key.
+    if (serviceAccount.private_key && typeof serviceAccount.private_key === 'string') {
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n')
+    }
     const app = initializeApp({
       credential: cert(serviceAccount),
     })
     firebaseMessaging = getMessaging(app)
-    console.log('Firebase Admin initialized successfully from environment variable.')
+    firebaseInitStatus = { initialized: true, source: sourceName, error: null }
+    console.log(`[Firebase Admin] Initialized successfully from ${sourceName}`)
   } else {
-    console.log('No firebase-service-account.json found. Push notifications will be active once configured.')
+    firebaseInitStatus = { initialized: false, source: 'none', error: 'No credentials configured' }
+    console.log('[Firebase Admin] No service account found. Push notifications will be active once configured.')
   }
 } catch (e) {
-  console.warn('Could not initialize Firebase Admin:', e.message)
+  firebaseInitStatus = { initialized: false, source: 'error', error: e.message }
+  console.warn('[Firebase Admin] Initialization failed:', e.message)
 }
 
 const app = express()
@@ -483,6 +507,18 @@ app.post('/api/me/status', requireAuth, async (req, res) => {
 })
 
 /**
+ * Public diagnostic endpoint to verify Firebase Admin readiness on server
+ */
+app.get('/api/push-status', (req, res) => {
+  res.json({
+    firebaseReady: firebaseInitStatus.initialized,
+    source: firebaseInitStatus.source,
+    error: firebaseInitStatus.error,
+    hasEnvVar: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT),
+  })
+})
+
+/**
  * Register or update the device's FCM push token for background/closed-app notifications
  */
 app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
@@ -491,8 +527,9 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
     if (!token || typeof token !== 'string') {
       return res.status(400).json({ error: 'FCM token is required' })
     }
-    await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: token } })
-    res.json({ ok: true })
+    const result = await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: token } })
+    console.log(`[FCM] Token registered for user ${req.userId} (matched: ${result.matchedCount}, modified: ${result.modifiedCount})`)
+    res.json({ ok: true, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount })
   } catch (error) {
     console.error('Could not save FCM token:', error.message)
     res.status(500).json({ error: 'Could not save FCM token' })
@@ -866,6 +903,7 @@ io.on('connection', async (socket) => {
           preview = `📷 ${preview}`
         }
 
+        console.log(`[FCM] Dispatching push notification to ${receiverId} (${senderName}: ${preview})`)
         firebaseMessaging.send({
           token: receiver.fcmToken,
           notification: {
@@ -876,6 +914,7 @@ io.on('connection', async (socket) => {
             senderId: userId,
             senderName,
             messageId: message.id,
+            text: preview,
             type: 'chat_message',
           },
           android: {
@@ -885,9 +924,17 @@ io.on('connection', async (socket) => {
               sound: 'default',
             },
           },
+        }).then((response) => {
+          console.log(`[FCM] Push delivered successfully to ${receiverId}:`, response)
         }).catch((err) => {
-          console.warn('FCM push notification send failed:', err.message)
+          console.warn('[FCM] Push notification send failed:', err.message)
         })
+      } else {
+        if (!firebaseMessaging) {
+          console.log('[FCM] Skipped push: Firebase Admin is not initialized on server')
+        } else if (!receiver?.fcmToken) {
+          console.log(`[FCM] Skipped push: Receiver ${receiverId} has no registered fcmToken`)
+        }
       }
 
       done({ ok: true, message })

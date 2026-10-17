@@ -54,6 +54,21 @@ class NotificationService {
         },
       );
 
+      if (!kIsWeb && Platform.isAndroid) {
+        final androidPlugin =
+            _notificationsPlugin.resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
+        const androidChannel = AndroidNotificationChannel(
+          _channelId,
+          _channelName,
+          description: _channelDescription,
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+        );
+        await androidPlugin?.createNotificationChannel(androidChannel);
+      }
+
       await requestPermissions();
       _initialized = true;
     } catch (e) {

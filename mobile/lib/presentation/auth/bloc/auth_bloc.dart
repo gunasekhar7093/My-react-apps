@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/services/fcm_service.dart';
 import '../../../data/repositories/auth_repository.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
@@ -23,6 +24,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(const AuthState(status: AuthStatus.unauthenticated));
     } else {
       emit(AuthState(status: AuthStatus.authenticated, user: user));
+      FcmService().registerDeviceToken();
     }
   }
 
@@ -31,6 +33,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       final result = await repository.login(username: event.username, password: event.password);
       emit(AuthState(status: AuthStatus.authenticated, user: result.user));
+      FcmService().registerDeviceToken();
     } on ApiException catch (error) {
       emit(state.copyWith(status: AuthStatus.failure, errorMessage: error.message));
     } catch (_) {
@@ -43,6 +46,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       final result = await repository.register(name: event.name, username: event.username, password: event.password, phone: event.phone);
       emit(AuthState(status: AuthStatus.authenticated, user: result.user));
+      FcmService().registerDeviceToken();
     } on ApiException catch (error) {
       emit(state.copyWith(status: AuthStatus.failure, errorMessage: error.message));
     } catch (_) {
