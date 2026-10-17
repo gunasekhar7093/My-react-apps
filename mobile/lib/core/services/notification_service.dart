@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 /// Service managing system/push-like notifications for incoming messages.
@@ -9,6 +10,9 @@ class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
+
+  static const MethodChannel _nativeChannel =
+      MethodChannel('com.dgs.chatspace/notifications');
 
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -138,6 +142,7 @@ class NotificationService {
         playSound: true,
         enableVibration: true,
         category: AndroidNotificationCategory.message,
+        tag: senderId,
         styleInformation: BigTextStyleInformation(
           bodyText,
           contentTitle: senderName,
@@ -169,5 +174,35 @@ class NotificationService {
     } catch (e) {
       debugPrint('Failed to show message notification: $e');
     }
+  }
+
+  /// Dismisses all notifications originating from a specific sender
+  /// (both local notifications and background Firebase notifications)
+  Future<void> cancelSenderNotification(String senderId) async {
+    if (senderId.isEmpty) return;
+    final notifId = (senderId.hashCode & 0x7FFFFFFF);
+    try {
+      await _notificationsPlugin.cancel(id: notifId, tag: senderId);
+    } catch (_) {}
+    try {
+      if (!kIsWeb && Platform.isAndroid) {
+        await _nativeChannel.invokeMethod('cancelNotification', {
+          'tag': senderId,
+          'id': notifId,
+        });
+      }
+    } catch (_) {}
+  }
+
+  /// Dismisses all notifications currently showing for this app
+  Future<void> cancelAllNotifications() async {
+    try {
+      await _notificationsPlugin.cancelAll();
+    } catch (_) {}
+    try {
+      if (!kIsWeb && Platform.isAndroid) {
+        await _nativeChannel.invokeMethod('cancelAll');
+      }
+    } catch (_) {}
   }
 }

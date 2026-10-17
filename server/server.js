@@ -993,6 +993,7 @@ io.on('connection', async (socket) => {
             notification: {
               channelId: 'chatspace_messages_channel',
               sound: 'default',
+              tag: userId,
             },
           },
         }).then((response) => {

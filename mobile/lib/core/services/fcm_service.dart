@@ -85,6 +85,7 @@ class FcmService {
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
         final senderId = message.data['senderId']?.toString();
         if (senderId != null && senderId.isNotEmpty) {
+          NotificationService().cancelSenderNotification(senderId);
           onMessageTapped?.call(senderId);
         }
       });
@@ -94,6 +95,7 @@ class FcmService {
       if (initialMessage != null) {
         final senderId = initialMessage.data['senderId']?.toString();
         if (senderId != null && senderId.isNotEmpty) {
+          NotificationService().cancelSenderNotification(senderId);
           Future.delayed(const Duration(milliseconds: 600), () {
             onMessageTapped?.call(senderId);
           });

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/socket_service.dart';
+import '../../../core/services/notification_service.dart';
 import '../../../data/models/message_model.dart';
 import '../../../data/repositories/message_repository.dart';
 import 'chat_event.dart';
@@ -32,6 +33,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     if (state.status == ChatStatus.ready || state.status == ChatStatus.loading) {
       return;
     }
+    NotificationService().cancelSenderNotification(otherUserId);
     emit(state.copyWith(status: ChatStatus.loading, clearError: true));
     try {
       final messages = await repository.getMessages(
@@ -68,7 +70,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     emit(state.copyWith(messages: [...state.messages, message], status: ChatStatus.ready));
 
     if (message.senderId == otherUserId) {
-      // Chat is open: acknowledge delivery and mark read immediately
+      // Chat is open: dismiss notifications, acknowledge delivery, and mark read immediately
+      NotificationService().cancelSenderNotification(otherUserId);
       socket.emitMessagesDelivered([message.id]);
       add(const ChatMarkedRead());
     }
@@ -103,6 +106,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Emitter<ChatState> emit,
   ) async {
     try {
+      NotificationService().cancelSenderNotification(otherUserId);
       socket.emitMessagesRead(otherUserId);
       await repository.markAsRead(userId: userId, otherUserId: otherUserId);
     } catch (_) {

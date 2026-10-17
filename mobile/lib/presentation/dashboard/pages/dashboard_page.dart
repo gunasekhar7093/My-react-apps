@@ -38,6 +38,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     NotificationService().initialize(
       onSelectUser: (userId) {
         if (!mounted) return;
+        NotificationService().cancelSenderNotification(userId);
         final currentUserId = context.read<AuthBloc>().state.user?.id;
         if (currentUserId == null) return;
         final user = _findOrBuildUser(userId);
@@ -47,6 +48,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     FcmService().initialize(
       onOpenChat: (userId) {
         if (!mounted) return;
+        NotificationService().cancelSenderNotification(userId);
         final currentUserId = context.read<AuthBloc>().state.user?.id;
         if (currentUserId == null) return;
         final user = _findOrBuildUser(userId);
@@ -180,6 +182,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if (_bloc.state.openChatUserId != null) {
       Navigator.of(context).popUntil((route) => route.isFirst);
     }
+
+    // Dismiss notifications for this user when opening their chat
+    NotificationService().cancelSenderNotification(user.id);
 
     // Tell the bloc the chat is open so unread badges are suppressed
     _bloc.add(DashboardOpenChatChanged(user.id));

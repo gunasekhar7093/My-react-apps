@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
+import '../../../core/services/notification_service.dart';
 import '../../../core/storage/secure_storage_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/message_model.dart';
@@ -54,6 +55,8 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     _chatUser = widget.user;
     _socket = widget.socket;
+    // Dismiss any notifications from this chat partner right upon entering
+    NotificationService().cancelSenderNotification(widget.user.id);
     SecureStorageService().getToken().then((val) {
       if (mounted) setState(() => _token = val);
     });
@@ -88,6 +91,9 @@ class _ChatPageState extends State<ChatPage> {
       final isThisChat = (msg.senderId == widget.user.id && msg.receiverId == widget.currentUserId) ||
           (msg.senderId == widget.currentUserId && msg.receiverId == widget.user.id);
       if (isThisChat) {
+        if (msg.senderId == widget.user.id) {
+          NotificationService().cancelSenderNotification(widget.user.id);
+        }
         _bloc.add(ChatMessageReceived(msg));
         // Forward to DashboardBloc so its user list / unread logic stays in sync
         final createdAt = json['createdAt']?.toString() ?? '';
