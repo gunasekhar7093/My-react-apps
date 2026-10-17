@@ -5,11 +5,19 @@ import 'package:flutter/foundation.dart';
 import '../../firebase_options.dart';
 import '../constants/api_constants.dart';
 import '../network/api_client.dart';
+import '../storage/secure_storage_service.dart';
 import 'notification_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
+    // If the user has logged out, ignore all background messages
+    final userToken = await SecureStorageService().getToken();
+    if (userToken == null || userToken.isEmpty) {
+      if (kDebugMode) print('[FCM] Dropping background notification: user is logged out');
+      return;
+    }
+
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
@@ -66,7 +74,10 @@ class FcmService {
       final messaging = FirebaseMessaging.instance;
 
       // 3. Foreground message listener (when app is in foreground)
-      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+        final userToken = await SecureStorageService().getToken();
+        if (userToken == null || userToken.isEmpty) return;
+
         final notification = message.notification;
         final senderId = message.data['senderId']?.toString() ?? '';
         final senderName = notification?.title ?? message.data['senderName']?.toString() ?? 'User';
@@ -165,6 +176,34 @@ class FcmService {
       if (kDebugMode) print('[FCM] Server token registration success: $response');
     } catch (e) {
       if (kDebugMode) print('[FCM] Could not sync FCM token with server: $e');
+    }
+  }
+
+  /// Unregisters and deletes the device's FCM token upon logout.
+  /// Prevents any notifications from arriving when logged out.
+  Future<void> unregisterDeviceToken() async {
+    try {
+      // 1. Unregister token on backend
+      try {
+        await _apiClient.delete(
+          ApiConstants.fcmToken,
+          authenticated: true,
+        );
+        if (kDebugMode) print('[FCM] Server token unregistration sent');
+      } catch (e) {
+        if (kDebugMode) print('[FCM] Failed to unregister token from server: $e');
+      }
+
+      // 2. Invalidate and delete local FCM token
+      try {
+        // ignore: deprecated_member_use
+        await FirebaseMessaging.instance.deleteToken();
+        if (kDebugMode) print('[FCM] Local token deleted successfully');
+      } catch (e) {
+        if (kDebugMode) print('[FCM] Failed to delete local token: $e');
+      }
+    } catch (e) {
+      if (kDebugMode) print('[FCM] unregisterDeviceToken error: $e');
     }
   }
 }

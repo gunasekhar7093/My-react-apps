@@ -40,6 +40,14 @@ class ApiClient {
     return _decodeMap(response);
   }
 
+  Future<Map<String, dynamic>> delete(String path, {bool authenticated = false}) async {
+    final response = await _client.delete(
+      Uri.parse(ApiConstants.baseUrl + path),
+      headers: await _headers(authenticated),
+    ).timeout(_timeout);
+    return _decodeMap(response);
+  }
+
   Future<List<dynamic>> getList(String path, {bool authenticated = false}) async {
     final response = await _client.get(
       Uri.parse(ApiConstants.baseUrl + path),

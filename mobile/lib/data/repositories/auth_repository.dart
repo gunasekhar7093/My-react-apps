@@ -1,6 +1,8 @@
 import 'dart:convert';
 import '../../core/constants/api_constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/fcm_service.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/storage/secure_storage_service.dart';
 import '../models/user_model.dart';
 
@@ -76,6 +78,11 @@ class AuthRepository {
 
   Future<void> logout() async {
     try {
+      // 1. Dismiss any notifications currently shown for this account
+      await NotificationService().cancelAllNotifications();
+      // 2. Unregister device token with server and delete locally
+      await FcmService().unregisterDeviceToken();
+      // 3. Inform server of logout to unset fcmToken and update status
       await apiClient.post(ApiConstants.logout, authenticated: true);
     } catch (_) {
       // Ignore network failures on logout

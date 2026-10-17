@@ -224,6 +224,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             ),
             onPressed: () {
               Navigator.of(ctx).pop();
+              NotificationService().cancelAllNotifications();
+              _socket.disconnect();
               context.read<AuthBloc>().add(const LogoutRequested());
             },
             child: const Text('Sign Out'),

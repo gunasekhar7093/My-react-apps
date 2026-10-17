@@ -530,6 +530,8 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
     if (!token || typeof token !== 'string') {
       return res.status(400).json({ error: 'FCM token is required' })
     }
+    // Remove this token from any other user who previously logged in on this device
+    await usersCollection.updateMany({ id: { $ne: req.userId }, fcmToken: token }, { $unset: { fcmToken: '' } })
     const result = await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: token } })
     console.log(`[FCM] Token registered for user ${req.userId} (matched: ${result.matchedCount}, modified: ${result.modifiedCount})`)
     res.json({ ok: true, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount })
@@ -539,10 +541,29 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
   }
 })
 
+app.delete('/api/me/fcm-token', requireAuth, async (req, res) => {
+  try {
+    await usersCollection.updateOne({ id: req.userId }, { $unset: { fcmToken: '' } })
+    console.log(`[FCM] Token unregistered for user ${req.userId}`)
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Could not delete FCM token:', error.message)
+    res.status(500).json({ error: 'Could not delete FCM token' })
+  }
+})
+
 app.post('/api/logout', requireAuth, async (req, res) => {
   try {
     const lastSeenAt = new Date().toISOString()
-    await usersCollection.updateOne({ id: req.userId }, { $set: { status: 'offline', lastSeenAt } })
+    // Mark offline AND remove fcmToken so no push notifications are dispatched to logged-out users
+    await usersCollection.updateOne(
+      { id: req.userId },
+      {
+        $set: { status: 'offline', lastSeenAt },
+        $unset: { fcmToken: '' },
+      }
+    )
+    console.log(`[FCM] Cleared fcmToken on logout for user ${req.userId}`)
     io.emit('user:status', { userId: req.userId, status: 'offline', lastSeenAt })
     res.json({ message: 'Logout successful' })
   } catch (error) {
