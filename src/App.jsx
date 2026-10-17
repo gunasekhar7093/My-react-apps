@@ -34,7 +34,6 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false)
   const [socketConnected, setSocketConnected] = useState(false)
   const [token, setToken] = useState(() => localStorage.getItem('chatspace_token') || '')
-  const [inAppNotification, setInAppNotification] = useState(null)
 
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
@@ -50,14 +49,6 @@ function App() {
       requestNotificationPermission()
     }
   }, [user])
-
-  useEffect(() => {
-    if (!inAppNotification) return
-    const timer = setTimeout(() => {
-      setInAppNotification(null)
-    }, 4500)
-    return () => clearTimeout(timer)
-  }, [inAppNotification])
 
   useEffect(() => {
     try {
@@ -261,15 +252,6 @@ function App() {
             onClick: () => {
               openChat(incoming.senderId)
             },
-          })
-
-          // 3. In-App WhatsApp floating banner
-          setInAppNotification({
-            id: incoming.id,
-            senderId: incoming.senderId,
-            senderName,
-            text: bodyText,
-            createdAt: incoming.createdAt,
           })
         }
       }
@@ -623,42 +605,7 @@ function App() {
   }
 
   return (
-    <>
-      {inAppNotification && (
-        <div
-          className="in-app-whatsapp-banner"
-          onClick={() => {
-            openChat(inAppNotification.senderId)
-            setInAppNotification(null)
-          }}
-          role="button"
-          tabIndex={0}
-        >
-          <div className="banner-avatar">
-            {inAppNotification.senderName?.[0]?.toUpperCase() || '?'}
-          </div>
-          <div className="banner-content">
-            <div className="banner-header">
-              <span className="banner-name">{inAppNotification.senderName}</span>
-              <span className="banner-tag">now</span>
-            </div>
-            <div className="banner-preview">{inAppNotification.text}</div>
-          </div>
-          <button
-            type="button"
-            className="banner-close"
-            onClick={(e) => {
-              e.stopPropagation()
-              setInAppNotification(null)
-            }}
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      <Routes>
+    <Routes>
       <Route
         path="/"
         element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
@@ -749,7 +696,6 @@ function App() {
         element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
       />
     </Routes>
-    </>
   )
 }
 
