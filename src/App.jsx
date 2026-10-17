@@ -131,6 +131,10 @@ function App() {
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
+      // Match the server's reduced heartbeat timings (pingInterval:10s, pingTimeout:8s)
+      // so the client doesn't false-timeout before the server's pong window closes.
+      pingTimeout: 8000,
+      pingInterval: 10000,
     })
 
     socketRef.current = socket

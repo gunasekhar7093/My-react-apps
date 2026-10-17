@@ -65,6 +65,10 @@ class SocketService {
           .enableReconnection()
           .setReconnectionDelay(1000)
           .setReconnectionDelayMax(5000)
+          // Match the server's reduced heartbeat so the mobile client doesn't
+          // false-disconnect before the server's pong window closes.
+          // Server: pingInterval=10 000ms, pingTimeout=8 000ms
+          .setTimeout(8000)        // equivalent to pingTimeout on client side
           .build(),
     );
 

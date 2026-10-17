@@ -30,6 +30,13 @@ const io = new SocketIOServer(httpServer, {
     ...corsOptions,
     methods: ['GET', 'POST'],
   },
+  // Reduce heartbeat timings so offline status updates reach other users quickly.
+  // Default pingInterval=25s + pingTimeout=20s means up to 45s delay.
+  // With 10s + 8s the worst-case delay is ~18s (still instant for graceful closes
+  // via the /api/logout REST call which emits immediately).
+  pingInterval: 10000,
+  pingTimeout:  8000,
+  closeTimeout: 4000,
 })
 
 const PORT = process.env.PORT || 3000
