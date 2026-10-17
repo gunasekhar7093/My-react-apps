@@ -8,6 +8,7 @@ class MessageModel {
   final String? mediaType;
   final String? mediaName;
   final int? mediaSize;
+  final String? senderName;
 
   const MessageModel({
     required this.id,
@@ -19,6 +20,7 @@ class MessageModel {
     this.mediaType,
     this.mediaName,
     this.mediaSize,
+    this.senderName,
   });
 
   bool get isMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
@@ -35,6 +37,7 @@ class MessageModel {
       mediaUrl: json['mediaUrl']?.toString(),
       mediaType: json['mediaType']?.toString(),
       mediaName: json['mediaName']?.toString(),
+      senderName: json['senderName']?.toString(),
       mediaSize: json['mediaSize'] is int
           ? json['mediaSize'] as int
           : int.tryParse(json['mediaSize']?.toString() ?? ''),
@@ -52,6 +55,7 @@ class MessageModel {
       'mediaType': ?mediaType,
       'mediaName': ?mediaName,
       'mediaSize': ?mediaSize,
+      'senderName': ?senderName,
     };
   }
 }

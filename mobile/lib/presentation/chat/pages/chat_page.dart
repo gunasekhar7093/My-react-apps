@@ -85,21 +85,25 @@ class _ChatPageState extends State<ChatPage> {
     _socket.addOnMessage((json) {
       if (!mounted) return;
       final msg = MessageModel.fromJson(json);
-      _bloc.add(ChatMessageReceived(msg));
-      // Forward to DashboardBloc so its user list / unread logic stays in sync
-      final createdAt = json['createdAt']?.toString() ?? '';
-      final senderId = json['senderId']?.toString() ?? '';
-      final receiverId = json['receiverId']?.toString() ?? '';
-      if (senderId.isNotEmpty && receiverId.isNotEmpty && createdAt.isNotEmpty) {
-        widget.dashboardBloc.add(DashboardPrivateMessageReceived(
-          senderId: senderId,
-          receiverId: receiverId,
-          createdAt: createdAt,
-          isIncoming: receiverId == widget.currentUserId,
-        ));
-      }
-      if (_scrollController.hasClients && _scrollController.offset < 80) {
-        _scrollToBottom();
+      final isThisChat = (msg.senderId == widget.user.id && msg.receiverId == widget.currentUserId) ||
+          (msg.senderId == widget.currentUserId && msg.receiverId == widget.user.id);
+      if (isThisChat) {
+        _bloc.add(ChatMessageReceived(msg));
+        // Forward to DashboardBloc so its user list / unread logic stays in sync
+        final createdAt = json['createdAt']?.toString() ?? '';
+        final senderId = json['senderId']?.toString() ?? '';
+        final receiverId = json['receiverId']?.toString() ?? '';
+        if (senderId.isNotEmpty && receiverId.isNotEmpty && createdAt.isNotEmpty) {
+          widget.dashboardBloc.add(DashboardPrivateMessageReceived(
+            senderId: senderId,
+            receiverId: receiverId,
+            createdAt: createdAt,
+            isIncoming: receiverId == widget.currentUserId,
+          ));
+        }
+        if (_scrollController.hasClients && _scrollController.offset < 80) {
+          _scrollToBottom();
+        }
       }
     });
 

@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
+import '../../../core/services/in_app_notification.dart';
+import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/user_model.dart';
 import '../../../data/repositories/user_repository.dart';
@@ -33,7 +35,70 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     _bloc = DashboardBloc(repository: UserRepository())..add(const DashboardStarted());
     _socket = SocketService();
+    NotificationService().initialize(
+      onSelectUser: (userId) {
+        if (!mounted) return;
+        final currentUserId = context.read<AuthBloc>().state.user?.id;
+        if (currentUserId == null) return;
+        final user = _findOrBuildUser(userId);
+        _openChat(user, currentUserId);
+      },
+    );
     _connectSocket();
+  }
+
+  /// Finds user in bloc list or constructs a fallback model
+  UserModel _findOrBuildUser(String userId, [String? fallbackName]) {
+    try {
+      return _bloc.state.users.firstWhere((u) => u.id == userId);
+    } catch (_) {
+      final name = (fallbackName != null && fallbackName.isNotEmpty) ? fallbackName : 'User';
+      return UserModel(
+        id: userId,
+        name: name,
+        username: name.toLowerCase().replaceAll(' ', ''),
+        phone: '',
+        status: 'online',
+        unreadCount: 1,
+      );
+    }
+  }
+
+  /// Triggers a WhatsApp-like notification (system heads-up + in-app banner)
+  void _handleIncomingNotification(Map<String, dynamic> message, String currentUserId) {
+    final senderId = message['senderId']?.toString() ?? '';
+    if (senderId.isEmpty) return;
+
+    final rawSenderName = message['senderName']?.toString();
+    final user = _findOrBuildUser(senderId, rawSenderName);
+    final senderName = (rawSenderName != null && rawSenderName.isNotEmpty)
+        ? rawSenderName
+        : (user.name.isNotEmpty ? user.name : user.username);
+
+    final text = message['text']?.toString() ?? '';
+    final mediaType = message['mediaType']?.toString();
+
+    // 1. WhatsApp-like heads-up system notification
+    NotificationService().showMessageNotification(
+      senderId: senderId,
+      senderName: senderName,
+      messageText: text,
+      mediaType: mediaType,
+    );
+
+    // 2. WhatsApp-style in-app floating banner
+    if (mounted) {
+      InAppNotification.show(
+        context: context,
+        senderId: senderId,
+        senderName: senderName,
+        messageText: text,
+        mediaType: mediaType,
+        onTap: () {
+          _openChat(user, currentUserId);
+        },
+      );
+    }
   }
 
   /// Called by Flutter when the app lifecycle changes.
@@ -81,10 +146,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         }
       },
       onMessage: (message) {
-        // While a chat is open, ChatPage's secondary callback handles forwarding
-        // messages to DashboardBloc. Skip here to avoid double-dispatching.
-        if (_bloc.state.openChatUserId != null) return;
-
         final senderId = message['senderId']?.toString();
         final receiverId = message['receiverId']?.toString();
         final createdAt = message['createdAt']?.toString();
@@ -97,17 +158,33 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           return;
         }
 
-        _bloc.add(DashboardPrivateMessageReceived(
-          senderId: senderId,
-          receiverId: receiverId,
-          createdAt: createdAt,
-          isIncoming: receiverId == currentUserId,
-        ));
+        final isIncoming = receiverId == currentUserId;
+
+        // If a chat is not open or not with this sender/receiver, update DashboardBloc state
+        if (_bloc.state.openChatUserId == null ||
+            (_bloc.state.openChatUserId != senderId && _bloc.state.openChatUserId != receiverId)) {
+          _bloc.add(DashboardPrivateMessageReceived(
+            senderId: senderId,
+            receiverId: receiverId,
+            createdAt: createdAt,
+            isIncoming: isIncoming,
+          ));
+        }
+
+        // WhatsApp notification: trigger when received message from someone else and user is not looking at their chat
+        if (isIncoming && senderId != currentUserId && _bloc.state.openChatUserId != senderId) {
+          _handleIncomingNotification(message, currentUserId);
+        }
       },
     );
   }
 
   Future<void> _openChat(UserModel user, String currentUserId) async {
+    // If a chat is already open (e.g. tapping banner to switch conversations), pop it first
+    if (_bloc.state.openChatUserId != null) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+
     // Tell the bloc the chat is open so unread badges are suppressed
     _bloc.add(DashboardOpenChatChanged(user.id));
     await Navigator.of(context).push(

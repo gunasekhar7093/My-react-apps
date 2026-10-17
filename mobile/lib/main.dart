@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'core/services/notification_service.dart';
 import 'core/theme/app_theme.dart';
 import 'data/repositories/auth_repository.dart';
 import 'presentation/auth/bloc/auth_bloc.dart';
@@ -10,7 +11,12 @@ import 'presentation/auth/pages/login_page.dart';
 import 'presentation/auth/pages/register_page.dart';
 import 'presentation/dashboard/pages/dashboard_page.dart';
 
-void main() {
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Pre-initialize local notifications for incoming message alerts
+  await NotificationService().initialize();
   runApp(const ChatSpaceApp());
 }
 
@@ -22,6 +28,7 @@ class ChatSpaceApp extends StatelessWidget {
     return BlocProvider(
       create: (_) => AuthBloc(repository: AuthRepository())..add(const AuthStarted()),
       child: MaterialApp(
+        navigatorKey: rootNavigatorKey,
         debugShowCheckedModeBanner: false,
         title: 'ChatSpace',
         theme: AppTheme.light,

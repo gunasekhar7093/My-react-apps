@@ -6,6 +6,8 @@ import LoginPage from './components/LoginPage'
 import RegisterPage from './components/RegisterPage'
 import Dashboard from './components/Dashboard'
 import ChatScreen from './components/ChatScreen'
+import { playMessageChime } from './utils/sound'
+import { requestNotificationPermission, showWebNotification } from './utils/notifications'
 
 const API_URL = 'https://my-react-apps-aet5.onrender.com'
 
@@ -32,10 +34,30 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false)
   const [socketConnected, setSocketConnected] = useState(false)
   const [token, setToken] = useState(() => localStorage.getItem('chatspace_token') || '')
+  const [inAppNotification, setInAppNotification] = useState(null)
 
   const socketRef = useRef(null)
   const selectedUserRef = useRef(null)
+  const usersRef = useRef([])
   const conversationRequestRef = useRef(0)
+
+  useEffect(() => {
+    usersRef.current = users
+  }, [users])
+
+  useEffect(() => {
+    if (user) {
+      requestNotificationPermission()
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (!inAppNotification) return
+    const timer = setTimeout(() => {
+      setInAppNotification(null)
+    }, 4500)
+    return () => clearTimeout(timer)
+  }, [inAppNotification])
 
   useEffect(() => {
     try {
@@ -168,11 +190,12 @@ function App() {
         ? incoming.receiverId
         : incoming.senderId
 
-      if (
+      const isCurrentChat =
         openUser &&
         ((incoming.senderId === user.id && incoming.receiverId === openUser.id) ||
           (incoming.senderId === openUser.id && incoming.receiverId === user.id))
-      ) {
+
+      if (isCurrentChat) {
         setMessages((current) => {
           if (current.some((item) => item.id === incoming.id)) return current
           const next = [...current, incoming]
@@ -200,6 +223,55 @@ function App() {
               : item
           )
         )
+      }
+
+      // ── WhatsApp Notification for Incoming Message ────────────────────────
+      if (incoming.receiverId === user.id && incoming.senderId !== user.id) {
+        const isFocusedInThisChat = isCurrentChat && !document.hidden
+
+        if (!isFocusedInThisChat) {
+          const senderUser = usersRef.current?.find((u) => u.id === incoming.senderId)
+          const senderName =
+            incoming.senderName ||
+            senderUser?.name ||
+            senderUser?.username ||
+            'New Message'
+
+          let bodyText = incoming.text || ''
+          if (!bodyText && incoming.mediaType) {
+            bodyText =
+              incoming.mediaType === 'image'
+                ? '📷 Photo'
+                : incoming.mediaType === 'video'
+                ? '🎥 Video'
+                : '📁 Attachment'
+          } else if (incoming.mediaType === 'image') {
+            bodyText = `📷 ${bodyText}`
+          } else if (incoming.mediaType === 'video') {
+            bodyText = `🎥 ${bodyText}`
+          }
+
+          // 1. Play WhatsApp chime
+          playMessageChime()
+
+          // 2. Desktop notification
+          showWebNotification({
+            title: senderName,
+            body: bodyText,
+            onClick: () => {
+              openChat(incoming.senderId)
+            },
+          })
+
+          // 3. In-App WhatsApp floating banner
+          setInAppNotification({
+            id: incoming.id,
+            senderId: incoming.senderId,
+            senderName,
+            text: bodyText,
+            createdAt: incoming.createdAt,
+          })
+        }
       }
     })
 
@@ -551,7 +623,42 @@ function App() {
   }
 
   return (
-    <Routes>
+    <>
+      {inAppNotification && (
+        <div
+          className="in-app-whatsapp-banner"
+          onClick={() => {
+            openChat(inAppNotification.senderId)
+            setInAppNotification(null)
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          <div className="banner-avatar">
+            {inAppNotification.senderName?.[0]?.toUpperCase() || '?'}
+          </div>
+          <div className="banner-content">
+            <div className="banner-header">
+              <span className="banner-name">{inAppNotification.senderName}</span>
+              <span className="banner-tag">now</span>
+            </div>
+            <div className="banner-preview">{inAppNotification.text}</div>
+          </div>
+          <button
+            type="button"
+            className="banner-close"
+            onClick={(e) => {
+              e.stopPropagation()
+              setInAppNotification(null)
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <Routes>
       <Route
         path="/"
         element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
@@ -642,6 +749,7 @@ function App() {
         element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
       />
     </Routes>
+    </>
   )
 }
 

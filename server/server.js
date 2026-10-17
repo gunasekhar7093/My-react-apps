@@ -782,9 +782,13 @@ io.on('connection', async (socket) => {
         return done({ ok: false, error: 'Recipient not found' })
       }
 
+      const sender = await getUserById(userId)
+      const senderName = sender?.name || sender?.username || 'User'
+
       const message = {
         id: 'm' + Date.now() + randomBytes(6).toString('hex'),
         senderId: userId,
+        senderName,
         receiverId,
         text: messageText,
         mediaUrl,
