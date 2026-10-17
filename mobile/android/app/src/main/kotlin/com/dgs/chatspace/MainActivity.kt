@@ -1,4 +1,4 @@
-package com.chatspace.dgs
+package com.dgs.chatspace
 
 import io.flutter.embedding.android.FlutterActivity
 
