@@ -326,7 +326,17 @@ export default function ChatScreen({
                         </div>
                       )}
                       {item.text && <span>{item.text}</span>}
-                      <small>{itemDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</small>
+                      <small className="message-meta">
+                        <span>{itemDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
+                        {item.senderId === user.id && (
+                          <span
+                            className={`msg-status-ticks ${item.readAt ? 'read' : item.deliveredAt ? 'delivered' : 'sent'}`}
+                            title={item.readAt ? 'Read (Two White Ticks)' : item.deliveredAt ? 'Delivered (Two Gray Ticks)' : 'Sent (One Gray Tick)'}
+                          >
+                            {item.readAt || item.deliveredAt ? '✓✓' : '✓'}
+                          </span>
+                        )}
+                      </small>
                     </div>
                   </div>
                 </div>

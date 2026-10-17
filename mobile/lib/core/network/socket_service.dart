@@ -11,6 +11,15 @@ typedef UserStatusCallback = void Function({
   String? lastSeenAt,
 });
 typedef MessageCallback = void Function(Map<String, dynamic> message);
+typedef MessagesReadCallback = void Function({
+  required String readerId,
+  required String readAt,
+});
+typedef MessagesDeliveredCallback = void Function({
+  required String receiverId,
+  required List<String> messageIds,
+  required String deliveredAt,
+});
 typedef SocketConnectionCallback = void Function();
 typedef SocketErrorCallback = void Function(String message);
 
@@ -30,6 +39,8 @@ class SocketService {
   // Using a list so multiple listeners can coexist without stomping.
   final List<MessageCallback> _extraMessageCallbacks = [];
   final List<UserStatusCallback> _extraStatusCallbacks = [];
+  final List<MessagesReadCallback> _extraMessagesReadCallbacks = [];
+  final List<MessagesDeliveredCallback> _extraMessagesDeliveredCallbacks = [];
 
   SocketService({SecureStorageService? storage})
       : storage = storage ?? SecureStorageService();
@@ -111,6 +122,28 @@ class SocketService {
           cb(msg);
         }
       })
+      ..on('messages:read', (data) {
+        if (data is! Map) return;
+        final readerId = data['readerId']?.toString();
+        final readAt = data['readAt']?.toString() ?? DateTime.now().toIso8601String();
+        if (readerId == null) return;
+        for (final cb in List.of(_extraMessagesReadCallbacks)) {
+          cb(readerId: readerId, readAt: readAt);
+        }
+      })
+      ..on('messages:delivered', (data) {
+        if (data is! Map) return;
+        final receiverId = data['receiverId']?.toString();
+        final deliveredAt = data['deliveredAt']?.toString() ?? DateTime.now().toIso8601String();
+        final messageIdsRaw = data['messageIds'];
+        final messageIds = messageIdsRaw is List
+            ? messageIdsRaw.map((e) => e.toString()).toList()
+            : <String>[];
+        if (receiverId == null) return;
+        for (final cb in List.of(_extraMessagesDeliveredCallbacks)) {
+          cb(receiverId: receiverId, messageIds: messageIds, deliveredAt: deliveredAt);
+        }
+      })
       ..connect();
   }
 
@@ -141,6 +174,46 @@ class SocketService {
       _extraStatusCallbacks.remove(callback);
     } else {
       _extraStatusCallbacks.clear();
+    }
+  }
+
+  /// Add a listener for when messages are read by the recipient (Two White Ticks).
+  void addOnMessagesRead(MessagesReadCallback callback) {
+    _extraMessagesReadCallbacks.add(callback);
+  }
+
+  /// Remove a previously added read status listener.
+  void removeOnMessagesRead([MessagesReadCallback? callback]) {
+    if (callback != null) {
+      _extraMessagesReadCallbacks.remove(callback);
+    } else {
+      _extraMessagesReadCallbacks.clear();
+    }
+  }
+
+  /// Add a listener for when messages are delivered to the recipient (Two Gray Ticks).
+  void addOnMessagesDelivered(MessagesDeliveredCallback callback) {
+    _extraMessagesDeliveredCallbacks.add(callback);
+  }
+
+  /// Remove a previously added delivery status listener.
+  void removeOnMessagesDelivered([MessagesDeliveredCallback? callback]) {
+    if (callback != null) {
+      _extraMessagesDeliveredCallbacks.remove(callback);
+    } else {
+      _extraMessagesDeliveredCallbacks.clear();
+    }
+  }
+
+  /// Notify server via socket that we have read incoming messages from sender.
+  void emitMessagesRead(String senderId) {
+    _socket?.emit('messages:read', {'senderId': senderId});
+  }
+
+  /// Acknowledge delivery of messages to this device.
+  void emitMessagesDelivered(List<String> messageIds) {
+    if (messageIds.isNotEmpty) {
+      _socket?.emit('messages:delivered', {'messageIds': messageIds});
     }
   }
 

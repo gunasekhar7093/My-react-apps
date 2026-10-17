@@ -24,6 +24,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatMessageReceived>(_onMessageReceived);
     on<ChatMessageSendRequested>(_onSendRequested);
     on<ChatMarkedRead>(_onMarkedRead);
+    on<ChatMessagesReadReceived>(_onMessagesReadReceived);
+    on<ChatMessagesDeliveredReceived>(_onMessagesDeliveredReceived);
   }
 
   Future<void> _onStarted(ChatStarted event, Emitter<ChatState> emit) async {
@@ -38,6 +40,15 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       );
       emit(state.copyWith(status: ChatStatus.ready, messages: messages));
       add(const ChatMarkedRead());
+
+      // Acknowledge delivery for all incoming messages that haven't been delivered
+      final undeliveredIds = messages
+          .where((m) => m.receiverId == userId && (m.deliveredAt == null || m.deliveredAt!.isEmpty))
+          .map((m) => m.id)
+          .toList();
+      if (undeliveredIds.isNotEmpty) {
+        socket.emitMessagesDelivered(undeliveredIds);
+      }
     } catch (error) {
       emit(state.copyWith(
         status: ChatStatus.failure,
@@ -55,7 +66,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
     if (state.messages.any((item) => item.id == message.id)) return;
     emit(state.copyWith(messages: [...state.messages, message], status: ChatStatus.ready));
-    if (message.senderId == otherUserId) add(const ChatMarkedRead());
+
+    if (message.senderId == otherUserId) {
+      // Chat is open: acknowledge delivery and mark read immediately
+      socket.emitMessagesDelivered([message.id]);
+      add(const ChatMarkedRead());
+    }
   }
 
   Future<void> _onSendRequested(
@@ -87,9 +103,41 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Emitter<ChatState> emit,
   ) async {
     try {
+      socket.emitMessagesRead(otherUserId);
       await repository.markAsRead(userId: userId, otherUserId: otherUserId);
     } catch (_) {
       // Reading messages should not interrupt the conversation UI.
     }
+  }
+
+  void _onMessagesReadReceived(
+    ChatMessagesReadReceived event,
+    Emitter<ChatState> emit,
+  ) {
+    if (event.readerId != otherUserId) return;
+    final updated = state.messages.map((m) {
+      if (m.senderId == userId && (m.readAt == null || m.readAt!.isEmpty)) {
+        return m.copyWith(readAt: event.readAt, deliveredAt: event.readAt);
+      }
+      return m;
+    }).toList();
+    emit(state.copyWith(messages: updated));
+  }
+
+  void _onMessagesDeliveredReceived(
+    ChatMessagesDeliveredReceived event,
+    Emitter<ChatState> emit,
+  ) {
+    if (event.receiverId != otherUserId) return;
+    final idSet = event.messageIds.toSet();
+    final updated = state.messages.map((m) {
+      if (m.senderId == userId && (m.deliveredAt == null || m.deliveredAt!.isEmpty)) {
+        if (idSet.isEmpty || idSet.contains(m.id)) {
+          return m.copyWith(deliveredAt: event.deliveredAt);
+        }
+      }
+      return m;
+    }).toList();
+    emit(state.copyWith(messages: updated));
   }
 }

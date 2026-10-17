@@ -187,6 +187,11 @@ function App() {
           (incoming.senderId === openUser.id && incoming.receiverId === user.id))
 
       if (isCurrentChat) {
+        if (incoming.senderId !== user.id) {
+          socket.emit('messages:delivered', { messageIds: [incoming.id] })
+          socket.emit('messages:read', { senderId: otherUserId })
+        }
+
         setMessages((current) => {
           if (current.some((item) => item.id === incoming.id)) return current
           const next = [...current, incoming]
@@ -202,6 +207,7 @@ function App() {
           )
         )
       } else if (incoming.receiverId === user.id) {
+        socket.emit('messages:delivered', { messageIds: [incoming.id] })
         setUnreadCounts((current) => ({
           ...current,
           [otherUserId]: (current[otherUserId] || 0) + 1,
@@ -255,6 +261,33 @@ function App() {
           })
         }
       }
+    })
+
+    // ── Two White Ticks (✓✓): Recipient has opened and read the message ─────
+    socket.on('messages:read', (data) => {
+      if (!data?.readerId) return
+      const readAt = data.readAt || new Date().toISOString()
+      setMessages((current) =>
+        current.map((msg) =>
+          msg.senderId === user.id && (!msg.readAt || !msg.deliveredAt)
+            ? { ...msg, readAt, deliveredAt: readAt, status: 'read' }
+            : msg
+        )
+      )
+    })
+
+    // ── Two Gray Ticks (✓✓): Message delivered to recipient's device ────────
+    socket.on('messages:delivered', (data) => {
+      if (!data?.receiverId) return
+      const deliveredAt = data.deliveredAt || new Date().toISOString()
+      const ids = Array.isArray(data.messageIds) ? new Set(data.messageIds) : null
+      setMessages((current) =>
+        current.map((msg) =>
+          msg.senderId === user.id && !msg.deliveredAt && (!ids || ids.has(msg.id))
+            ? { ...msg, deliveredAt, status: 'delivered' }
+            : msg
+        )
+      )
     })
 
     // ── Instant offline/online signaling ─────────────────────────────────────
@@ -498,6 +531,7 @@ function App() {
       delete next[userId]
       return next
     })
+    socketRef.current?.emit('messages:read', { senderId: userId })
     navigate('/chat/' + encodeURIComponent(userId))
   }
 

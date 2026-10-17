@@ -1,9 +1,17 @@
+enum MessageStatus {
+  sent,      // One Gray Tick (✓)
+  delivered, // Two Gray Ticks (✓✓)
+  read,      // Two White Ticks (✓✓)
+}
+
 class MessageModel {
   final String id;
   final String senderId;
   final String receiverId;
   final String text;
   final String createdAt;
+  final String? deliveredAt;
+  final String? readAt;
   final String? mediaUrl;
   final String? mediaType;
   final String? mediaName;
@@ -16,6 +24,8 @@ class MessageModel {
     required this.receiverId,
     required this.text,
     required this.createdAt,
+    this.deliveredAt,
+    this.readAt,
     this.mediaUrl,
     this.mediaType,
     this.mediaName,
@@ -27,6 +37,16 @@ class MessageModel {
   bool get isImage => mediaType == 'image';
   bool get isVideo => mediaType == 'video';
 
+  MessageStatus get status {
+    if (readAt != null && readAt!.isNotEmpty) {
+      return MessageStatus.read;
+    }
+    if (deliveredAt != null && deliveredAt!.isNotEmpty) {
+      return MessageStatus.delivered;
+    }
+    return MessageStatus.sent;
+  }
+
   factory MessageModel.fromJson(Map<String, dynamic> json) {
     return MessageModel(
       id: json['id']?.toString() ?? '',
@@ -34,6 +54,8 @@ class MessageModel {
       receiverId: json['receiverId']?.toString() ?? '',
       text: json['text']?.toString() ?? '',
       createdAt: json['createdAt']?.toString() ?? '',
+      deliveredAt: json['deliveredAt']?.toString(),
+      readAt: json['readAt']?.toString(),
       mediaUrl: json['mediaUrl']?.toString(),
       mediaType: json['mediaType']?.toString(),
       mediaName: json['mediaName']?.toString(),
@@ -51,11 +73,43 @@ class MessageModel {
       'receiverId': receiverId,
       'text': text,
       'createdAt': createdAt,
+      'deliveredAt': ?deliveredAt,
+      'readAt': ?readAt,
       'mediaUrl': ?mediaUrl,
       'mediaType': ?mediaType,
       'mediaName': ?mediaName,
       'mediaSize': ?mediaSize,
       'senderName': ?senderName,
     };
+  }
+
+  MessageModel copyWith({
+    String? id,
+    String? senderId,
+    String? receiverId,
+    String? text,
+    String? createdAt,
+    String? deliveredAt,
+    String? readAt,
+    String? mediaUrl,
+    String? mediaType,
+    String? mediaName,
+    int? mediaSize,
+    String? senderName,
+  }) {
+    return MessageModel(
+      id: id ?? this.id,
+      senderId: senderId ?? this.senderId,
+      receiverId: receiverId ?? this.receiverId,
+      text: text ?? this.text,
+      createdAt: createdAt ?? this.createdAt,
+      deliveredAt: deliveredAt ?? this.deliveredAt,
+      readAt: readAt ?? this.readAt,
+      mediaUrl: mediaUrl ?? this.mediaUrl,
+      mediaType: mediaType ?? this.mediaType,
+      mediaName: mediaName ?? this.mediaName,
+      mediaSize: mediaSize ?? this.mediaSize,
+      senderName: senderName ?? this.senderName,
+    );
   }
 }

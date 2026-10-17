@@ -556,16 +556,30 @@ app.post('/api/messages/:userId/:otherUserId/read', requireAuth, async (req, res
       return res.status(403).json({ error: 'You can only update your own conversations' })
     }
 
-    await messagesCollection.updateMany(
+    const now = new Date().toISOString()
+    const result = await messagesCollection.updateMany(
       {
         senderId: otherUserId,
         receiverId: userId,
-        readAt: { $exists: false },
+        readAt: { $in: [null, undefined] },
       },
-      { $set: { readAt: new Date().toISOString() } },
+      {
+        $set: {
+          readAt: now,
+          deliveredAt: now, // If read, it is necessarily delivered
+          status: 'read',
+        },
+      },
     )
 
-    res.json({ ok: true })
+    // Notify the sender in real-time so their ticks turn into Two White Ticks (✓✓)
+    io.to(otherUserId).emit('messages:read', {
+      readerId: userId,
+      conversationWith: otherUserId,
+      readAt: now,
+    })
+
+    res.json({ ok: true, count: result.modifiedCount })
   } catch (error) {
     console.error('Could not mark messages as read:', error.message)
     res.status(500).json({ error: 'Could not mark messages as read' })
@@ -845,6 +859,39 @@ io.on('connection', async (socket) => {
     console.error('Could not update online status:', error.message)
   }
 
+  // ── Auto-deliver pending messages to this connected user ───────────────
+  try {
+    const undelivered = await messagesCollection.find({
+      receiverId: userId,
+      deliveredAt: { $in: [null, undefined] },
+    }).toArray()
+
+    if (undelivered.length > 0) {
+      const now = new Date().toISOString()
+      const ids = undelivered.map((m) => m.id)
+      await messagesCollection.updateMany(
+        { id: { $in: ids } },
+        { $set: { deliveredAt: now, status: 'delivered' } },
+      )
+
+      // Notify each sender that their messages were delivered
+      const bySender = new Map()
+      for (const m of undelivered) {
+        if (!bySender.has(m.senderId)) bySender.set(m.senderId, [])
+        bySender.get(m.senderId).push(m.id)
+      }
+      for (const [senderId, messageIds] of bySender.entries()) {
+        io.to(senderId).emit('messages:delivered', {
+          receiverId: userId,
+          messageIds,
+          deliveredAt: now,
+        })
+      }
+    }
+  } catch (err) {
+    console.error('Error auto-delivering messages on connect:', err.message)
+  }
+
   socket.on('private:message', async (payload, acknowledge) => {
     const done = typeof acknowledge === 'function' ? acknowledge : () => {}
 
@@ -876,6 +923,10 @@ io.on('connection', async (socket) => {
       const sender = await getUserById(userId)
       const senderName = sender?.name || sender?.username || 'User'
 
+      const isReceiverOnline = onlineConnections.has(receiverId) && (onlineConnections.get(receiverId)?.size || 0) > 0
+      const now = new Date().toISOString()
+      const deliveredAt = isReceiverOnline ? now : null
+
       const message = {
         id: 'm' + Date.now() + randomBytes(6).toString('hex'),
         senderId: userId,
@@ -886,7 +937,10 @@ io.on('connection', async (socket) => {
         mediaType,
         mediaName,
         mediaSize,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        deliveredAt,
+        readAt: null,
+        status: deliveredAt ? 'delivered' : 'sent',
       }
 
       await messagesCollection.insertOne(message)
@@ -941,6 +995,75 @@ io.on('connection', async (socket) => {
     } catch (error) {
       console.error('Could not send private message:', error.message)
       done({ ok: false, error: 'Could not send message' })
+    }
+  })
+
+  // ── Real-time Read receipts (Two White Ticks ✓✓) ─────────────────────────
+  socket.on('messages:read', async (payload) => {
+    try {
+      const otherUserId = typeof payload?.senderId === 'string' ? payload.senderId.trim() : ''
+      if (!otherUserId) return
+
+      const now = new Date().toISOString()
+      await messagesCollection.updateMany(
+        {
+          senderId: otherUserId,
+          receiverId: userId,
+          readAt: { $in: [null, undefined] },
+        },
+        {
+          $set: {
+            readAt: now,
+            deliveredAt: now,
+            status: 'read',
+          },
+        },
+      )
+
+      io.to(otherUserId).emit('messages:read', {
+        readerId: userId,
+        conversationWith: otherUserId,
+        readAt: now,
+      })
+    } catch (err) {
+      console.error('Socket messages:read error:', err.message)
+    }
+  })
+
+  // ── Real-time Delivery receipts (Two Gray Ticks ✓✓) ───────────────────────
+  socket.on('messages:delivered', async (payload) => {
+    try {
+      const messageIds = Array.isArray(payload?.messageIds) ? payload.messageIds : []
+      if (messageIds.length === 0) return
+
+      const now = new Date().toISOString()
+      const undelivered = await messagesCollection.find({
+        id: { $in: messageIds },
+        receiverId: userId,
+        deliveredAt: { $in: [null, undefined] },
+      }).toArray()
+
+      if (undelivered.length > 0) {
+        await messagesCollection.updateMany(
+          { id: { $in: undelivered.map((m) => m.id) } },
+          { $set: { deliveredAt: now, status: 'delivered' } },
+        )
+
+        const bySender = new Map()
+        for (const m of undelivered) {
+          if (!bySender.has(m.senderId)) bySender.set(m.senderId, [])
+          bySender.get(m.senderId).push(m.id)
+        }
+        for (const [senderId, ids] of bySender.entries()) {
+          io.to(senderId).emit('messages:delivered', {
+            receiverId: userId,
+            messageIds: ids,
+            deliveredAt: now,
+          })
+        }
+      }
+    } catch (err) {
+      console.error('Socket messages:delivered error:', err.message)
     }
   })
 

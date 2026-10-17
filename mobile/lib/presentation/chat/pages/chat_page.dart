@@ -131,6 +131,24 @@ class _ChatPageState extends State<ChatPage> {
         lastSeenAt: lastSeenAt,
       ));
     });
+
+    _socket.addOnMessagesRead(({required String readerId, required String readAt}) {
+      if (!mounted) return;
+      if (readerId == widget.user.id) {
+        _bloc.add(ChatMessagesReadReceived(readerId: readerId, readAt: readAt));
+      }
+    });
+
+    _socket.addOnMessagesDelivered(({required String receiverId, required List<String> messageIds, required String deliveredAt}) {
+      if (!mounted) return;
+      if (receiverId == widget.user.id) {
+        _bloc.add(ChatMessagesDeliveredReceived(
+          receiverId: receiverId,
+          messageIds: messageIds,
+          deliveredAt: deliveredAt,
+        ));
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -152,6 +170,8 @@ class _ChatPageState extends State<ChatPage> {
     // the socket belongs to DashboardPage and must remain alive.
     _socket.removeOnMessage();
     _socket.removeOnUserStatus();
+    _socket.removeOnMessagesRead();
+    _socket.removeOnMessagesDelivered();
     _bloc.close();
     super.dispose();
   }
@@ -1120,11 +1140,7 @@ class _Bubble extends StatelessWidget {
           ),
         if (mine) ...[
           const SizedBox(width: 3.5),
-          Icon(
-            Icons.done_all_rounded,
-            size: 13,
-            color: Colors.white.withValues(alpha: 0.85),
-          ),
+          _StatusTicks(status: message.status),
         ],
       ],
     );
@@ -1207,11 +1223,7 @@ class _Bubble extends StatelessWidget {
           ),
         if (mine) ...[
           const SizedBox(width: 3.5),
-          Icon(
-            Icons.done_all_rounded,
-            size: 13,
-            color: Colors.white.withValues(alpha: 0.85),
-          ),
+          _StatusTicks(status: message.status),
         ],
       ],
     );
@@ -1300,5 +1312,39 @@ class _Bubble extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// WhatsApp-style message delivery & read status ticks
+class _StatusTicks extends StatelessWidget {
+  final MessageStatus status;
+
+  const _StatusTicks({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case MessageStatus.sent:
+        // One Gray Tick (✓): Sent to server, not yet reached recipient's device
+        return const Icon(
+          Icons.check_rounded,
+          size: 13.5,
+          color: Color(0xFFB0B7C3),
+        );
+      case MessageStatus.delivered:
+        // Two Gray Ticks (✓✓): Delivered to recipient's device
+        return const Icon(
+          Icons.done_all_rounded,
+          size: 14.5,
+          color: Color(0xFFB0B7C3),
+        );
+      case MessageStatus.read:
+        // Two White Ticks (✓✓): Recipient has opened and read the message
+        return const Icon(
+          Icons.done_all_rounded,
+          size: 14.5,
+          color: Colors.white,
+        );
+    }
   }
 }

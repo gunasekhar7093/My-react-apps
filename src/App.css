@@ -216,4 +216,36 @@
   line-height: 1.4;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
+
+/* WhatsApp-Style Message Status Ticks */
+.message-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.msg-status-ticks {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -2px;
+  font-weight: 700;
+  margin-left: 2px;
+  user-select: none;
+}
+
+.msg-status-ticks.sent,
+.msg-status-ticks.delivered {
+  color: #b0b7c3;
+  opacity: 0.75;
+}
+
+.msg-status-ticks.read {
+  color: #ffffff;
+  opacity: 1;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.4);
+}
 
