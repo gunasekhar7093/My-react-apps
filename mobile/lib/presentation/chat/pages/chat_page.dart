@@ -835,11 +835,22 @@ class _ChatPageState extends State<ChatPage> {
     if (value == null || value.isEmpty) return 'Last seen recently';
     final d = DateTime.tryParse(value)?.toLocal();
     if (d == null) return 'Last seen recently';
-    final diff = DateTime.now().difference(d);
-    if (diff.inMinutes < 1) return 'Last seen just now';
-    if (diff.inMinutes < 60) return 'Last seen ${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return 'Last seen ${diff.inHours}h ago';
-    return 'Last seen ${DateFormat('MMM d, h:mm a').format(d)}';
+
+    final now = DateTime.now();
+    final today    = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final dDate    = DateTime(d.year, d.month, d.day);
+
+    final timeStr = DateFormat('hh:mm a').format(d);  // e.g. 09:36 PM
+
+    if (dDate == today) {
+      return 'Last seen today at $timeStr';
+    } else if (dDate == yesterday) {
+      return 'Last seen yesterday at $timeStr';
+    } else {
+      final dateStr = DateFormat('dd/MM/yyyy').format(d);  // e.g. 15/10/2026
+      return 'Last seen $dateStr at $timeStr';
+    }
   }
 
   static String _formatBytes(int bytes) {
