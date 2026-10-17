@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import '../../../core/constants/api_constants.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/user_model.dart';
@@ -19,17 +21,56 @@ class DashboardPage extends StatefulWidget {
   @override State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   late final DashboardBloc _bloc;
   late final SocketService _socket;
   final _search = TextEditingController();
+  final _apiClient = ApiClient();
   DashboardFilter _currentFilter = DashboardFilter.all;
 
   @override void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bloc = DashboardBloc(repository: UserRepository())..add(const DashboardStarted());
     _socket = SocketService();
     _connectSocket();
+  }
+
+  /// Called by Flutter when the app lifecycle changes.
+  /// We use this to proactively signal online/offline so other users see
+  /// the change instantly instead of waiting for ping/pong timeout.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // App came to foreground — signal online immediately
+        _updateStatus('online');
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        // App went to background or is being closed — signal offline immediately
+        _updateStatus('offline');
+        break;
+      case AppLifecycleState.inactive:
+        // Brief inactive state (e.g. notification shade opened) — ignore
+        break;
+    }
+  }
+
+  /// Calls /api/me/status to instantly broadcast the user's status to all others.
+  /// This is the proactive signal — the socket ping/pong is just a fallback.
+  Future<void> _updateStatus(String status) async {
+    try {
+      await _apiClient.post(
+        ApiConstants.meStatus,
+        body: {'status': status},
+        authenticated: true,
+      );
+    } catch (_) {
+      // Silently ignore — the ping/pong fallback will catch any missed update.
+    }
   }
 
   Future<void> _connectSocket() async {
@@ -115,6 +156,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   @override void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
     _socket.disconnect();
     _bloc.close();

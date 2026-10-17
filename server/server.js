@@ -30,13 +30,12 @@ const io = new SocketIOServer(httpServer, {
     ...corsOptions,
     methods: ['GET', 'POST'],
   },
-  // Reduce heartbeat timings so offline status updates reach other users quickly.
-  // Default pingInterval=25s + pingTimeout=20s means up to 45s delay.
-  // With 10s + 8s the worst-case delay is ~18s (still instant for graceful closes
-  // via the /api/logout REST call which emits immediately).
-  pingInterval: 10000,
-  pingTimeout:  8000,
-  closeTimeout: 4000,
+  // Aggressive heartbeat for fast disconnect detection (~5s worst case).
+  // Proactive /api/me/status calls handle app-background/page-close instantly.
+  // These timings are the fallback for true network drops.
+  pingInterval: 3000,
+  pingTimeout:  2000,
+  closeTimeout: 1000,
 })
 
 const PORT = process.env.PORT || 3000
@@ -419,6 +418,30 @@ app.post('/api/login', async (req, res) => {
     })
   } catch {
     res.status(500).json({ error: 'Could not log in' })
+  }
+})
+
+/**
+ * Instant status update endpoint — called proactively by clients before
+ * the socket has a chance to disconnect (app background, page close, etc.).
+ * This is what makes offline appear instantly instead of waiting for ping timeout.
+ */
+app.post('/api/me/status', requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body
+    if (status !== 'online' && status !== 'offline') {
+      return res.status(400).json({ error: 'Status must be online or offline' })
+    }
+    const update = { status }
+    const lastSeenAt = status === 'offline' ? new Date().toISOString() : null
+    if (lastSeenAt) update.lastSeenAt = lastSeenAt
+    await usersCollection.updateOne({ id: req.userId }, { $set: update })
+    // Broadcast to all connected clients immediately
+    io.emit('user:status', { userId: req.userId, status, ...(lastSeenAt && { lastSeenAt }) })
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Could not update status:', error.message)
+    res.status(500).json({ error: 'Could not update status' })
   }
 })
 

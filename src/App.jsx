@@ -131,10 +131,10 @@ function App() {
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
-      // Match the server's reduced heartbeat timings (pingInterval:10s, pingTimeout:8s)
-      // so the client doesn't false-timeout before the server's pong window closes.
-      pingTimeout: 8000,
-      pingInterval: 10000,
+      // Match the server's heartbeat timings (pingInterval:3s, pingTimeout:2s)
+      // so the client aligns with the server's fast disconnect detection.
+      pingTimeout: 2000,
+      pingInterval: 3000,
     })
 
     socketRef.current = socket
@@ -203,8 +203,42 @@ function App() {
       }
     })
 
+    // ── Instant offline/online signaling ─────────────────────────────────────
+    // Call /api/me/status immediately when the tab is hidden/shown or the
+    // window is closed. This makes the status change visible to others
+    // instantly instead of waiting for the ping/pong timeout (~5s fallback).
+    const sendStatus = (status) => {
+      try {
+        // Use fetch with keepalive:true so the request completes even if the
+        // page is closing (required for beforeunload handler on Chrome/Edge).
+        fetch(API_URL + '/api/me/status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + token,
+          },
+          body: JSON.stringify({ status }),
+          keepalive: true,
+        }).catch(() => {})
+      } catch (_) {}
+    }
+
+    const onVisibilityChange = () => {
+      if (!active) return
+      sendStatus(document.hidden ? 'offline' : 'online')
+    }
+
+    const onBeforeUnload = () => {
+      sendStatus('offline')
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('beforeunload', onBeforeUnload)
+
     return () => {
       active = false
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('beforeunload', onBeforeUnload)
       socket.removeAllListeners()
       socket.disconnect()
       socketRef.current = null
