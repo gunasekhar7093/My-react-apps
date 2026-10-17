@@ -360,7 +360,10 @@ app.get('/api/users', requireAuth, async (req, res) => {
       {
         $match: {
           receiverId: req.userId,
-          readAt: { $exists: false },
+          $or: [
+            { readAt: null },
+            { readAt: { $exists: false } },
+          ],
         },
       },
       {
@@ -561,7 +564,10 @@ app.post('/api/messages/:userId/:otherUserId/read', requireAuth, async (req, res
       {
         senderId: otherUserId,
         receiverId: userId,
-        readAt: { $in: [null, undefined] },
+        $or: [
+          { readAt: null },
+          { readAt: { $exists: false } },
+        ],
       },
       {
         $set: {
@@ -616,14 +622,25 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
     }
 
     if (!before) {
-      await messagesCollection.updateMany(
+      const now = new Date().toISOString()
+      const markResult = await messagesCollection.updateMany(
         {
           senderId: otherUserId,
           receiverId: userId,
-          readAt: { $exists: false },
+          $or: [
+            { readAt: null },
+            { readAt: { $exists: false } },
+          ],
         },
-        { $set: { readAt: new Date().toISOString() } },
+        { $set: { readAt: now, deliveredAt: now, status: 'read' } },
       )
+      if (markResult.modifiedCount > 0) {
+        io.to(otherUserId).emit('messages:read', {
+          readerId: userId,
+          conversationWith: otherUserId,
+          readAt: now,
+        })
+      }
     }
 
     const conversation = await messagesCollection
@@ -1009,7 +1026,10 @@ io.on('connection', async (socket) => {
         {
           senderId: otherUserId,
           receiverId: userId,
-          readAt: { $in: [null, undefined] },
+          $or: [
+            { readAt: null },
+            { readAt: { $exists: false } },
+          ],
         },
         {
           $set: {

@@ -238,7 +238,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         status: event.user.status,
         lastSeenAt: event.user.lastSeenAt,
         latestMessageAt: event.user.latestMessageAt ?? user.latestMessageAt,
-        unreadCount: event.user.unreadCount,
+        unreadCount: event.user.unreadCount > user.unreadCount
+            ? event.user.unreadCount
+            : user.unreadCount,
       );
     }).toList();
 
