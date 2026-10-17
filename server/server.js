@@ -1,10 +1,38 @@
 import express from 'express'
 import cors from 'cors'
 import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
 import { Server as SocketIOServer } from 'socket.io'
 import { MongoClient, GridFSBucket, ObjectId } from 'mongodb'
 import multer from 'multer'
+import admin from 'firebase-admin'
+
+// ── Firebase Admin SDK (Cloud Push Notifications when app is closed) ─────────
+let firebaseAdminReady = false
+try {
+  const serviceAccountPath = path.resolve('firebase-service-account.json')
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'))
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    })
+    firebaseAdminReady = true
+    console.log('Firebase Admin initialized successfully from service account file.')
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    })
+    firebaseAdminReady = true
+    console.log('Firebase Admin initialized successfully from environment variable.')
+  } else {
+    console.log('No firebase-service-account.json found. Push notifications will be active once configured.')
+  }
+} catch (e) {
+  console.warn('Could not initialize Firebase Admin:', e.message)
+}
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -445,6 +473,23 @@ app.post('/api/me/status', requireAuth, async (req, res) => {
   }
 })
 
+/**
+ * Register or update the device's FCM push token for background/closed-app notifications
+ */
+app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
+  try {
+    const { token } = req.body
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'FCM token is required' })
+    }
+    await usersCollection.updateOne({ id: req.userId }, { $set: { fcmToken: token } })
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Could not save FCM token:', error.message)
+    res.status(500).json({ error: 'Could not save FCM token' })
+  }
+})
+
 app.post('/api/logout', requireAuth, async (req, res) => {
   try {
     const lastSeenAt = new Date().toISOString()
@@ -802,6 +847,39 @@ io.on('connection', async (socket) => {
 
       io.to(userId).emit('private:message', message)
       io.to(receiverId).emit('private:message', message)
+
+      // ── Cloud Push Notification via Firebase (for closed/background mobile app)
+      if (firebaseAdminReady && receiver?.fcmToken) {
+        let preview = messageText
+        if (!preview && mediaType) {
+          preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
+        } else if (mediaType === 'image') {
+          preview = `📷 ${preview}`
+        }
+
+        admin.messaging().send({
+          token: receiver.fcmToken,
+          notification: {
+            title: senderName,
+            body: preview,
+          },
+          data: {
+            senderId: userId,
+            senderName,
+            messageId: message.id,
+            type: 'chat_message',
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'chatspace_messages_channel',
+              sound: 'default',
+            },
+          },
+        }).catch((err) => {
+          console.warn('FCM push notification send failed:', err.message)
+        })
+      }
 
       done({ ok: true, message })
     } catch (error) {

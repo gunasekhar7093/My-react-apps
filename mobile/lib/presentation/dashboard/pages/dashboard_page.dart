@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
+import '../../../core/services/fcm_service.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/user_model.dart';
@@ -43,6 +44,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         _openChat(user, currentUserId);
       },
     );
+    FcmService().initialize(
+      onOpenChat: (userId) {
+        if (!mounted) return;
+        final currentUserId = context.read<AuthBloc>().state.user?.id;
+        if (currentUserId == null) return;
+        final user = _findOrBuildUser(userId);
+        _openChat(user, currentUserId);
+      },
+    );
+    FcmService().registerDeviceToken();
     _connectSocket();
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'core/services/fcm_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/theme/app_theme.dart';
 import 'data/repositories/auth_repository.dart';
@@ -17,6 +18,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Pre-initialize local notifications for incoming message alerts
   await NotificationService().initialize();
+  // Pre-initialize Firebase Cloud Messaging
+  await FcmService().initialize();
   runApp(const ChatSpaceApp());
 }
 
