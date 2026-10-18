@@ -88,13 +88,20 @@ class MessageRepository {
   }) async {
     final now = DateTime.now().toIso8601String();
     await localStorage.markMessagesAsRead(userId, otherUserId, readAt: now);
+    await localStorage.zeroUnreadCount(userId, otherUserId);
+    await localStorage.addPendingReadReceipt(otherUserId);
     try {
       await apiClient.post(
         '/api/messages/$userId/$otherUserId/read',
         authenticated: true,
       );
+      await localStorage.removePendingReadReceipt(otherUserId);
     } catch (_) {}
   }
+
+  Future<Set<String>> getPendingReadReceipts() => localStorage.getPendingReadReceipts();
+
+  Future<void> removePendingReadReceipt(String partnerId) => localStorage.removePendingReadReceipt(partnerId);
 
   Future<void> deleteLocalMessage({
     required String userId,

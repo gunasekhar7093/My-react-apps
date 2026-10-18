@@ -61,4 +61,18 @@ class UserRepository {
       rethrow;
     }
   }
+
+  Future<void> saveCachedUsers(List<UserModel> users) async {
+    final currentUserId = await _getCurrentUserId();
+    if (currentUserId != null && currentUserId.isNotEmpty) {
+      await localStorage.saveUsers(currentUserId, users);
+    }
+  }
+
+  Future<void> zeroUnreadCount(String partnerId) async {
+    final currentUserId = await _getCurrentUserId();
+    if (currentUserId != null && currentUserId.isNotEmpty) {
+      await localStorage.zeroUnreadCount(currentUserId, partnerId);
+    }
+  }
 }

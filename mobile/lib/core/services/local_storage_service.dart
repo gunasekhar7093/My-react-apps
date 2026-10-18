@@ -70,6 +70,24 @@ class LocalStorageService {
     }
   }
 
+  Future<void> zeroUnreadCount(String currentUserId, String partnerId) async {
+    try {
+      if (currentUserId.isEmpty || partnerId.isEmpty) return;
+      final users = await getUsers(currentUserId);
+      bool changed = false;
+      final updated = users.map((u) {
+        if (u.id == partnerId && u.unreadCount > 0) {
+          changed = true;
+          return u.copyWith(unreadCount: 0);
+        }
+        return u;
+      }).toList();
+      if (changed) {
+        await saveUsers(currentUserId, updated);
+      }
+    } catch (_) {}
+  }
+
   // ── Conversation Messages Cache ──────────────────────────────────────────
 
   Future<File> _getMessagesFile(String u1, String u2) async {
@@ -446,6 +464,47 @@ class LocalStorageService {
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = replaced.map((m) => m.toJson()).toList();
       await file.writeAsString(jsonEncode(jsonList), flush: true);
+    } catch (_) {}
+  }
+
+  // ── Pending Read Receipts Queue ──────────────────────────────────────────
+
+  Future<File> _getPendingReadReceiptsFile() async {
+    final dir = await _getCacheDirectory();
+    return File('${dir.path}/pending_read_receipts.json');
+  }
+
+  Future<Set<String>> getPendingReadReceipts() async {
+    try {
+      final file = await _getPendingReadReceiptsFile();
+      if (!await file.exists()) return <String>{};
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return <String>{};
+      final dynamic decoded = jsonDecode(content);
+      if (decoded is List) {
+        return decoded.map((e) => e.toString()).toSet();
+      }
+    } catch (_) {}
+    return <String>{};
+  }
+
+  Future<void> addPendingReadReceipt(String partnerId) async {
+    try {
+      if (partnerId.isEmpty) return;
+      final existing = await getPendingReadReceipts();
+      existing.add(partnerId);
+      final file = await _getPendingReadReceiptsFile();
+      await file.writeAsString(jsonEncode(existing.toList()), flush: true);
+    } catch (_) {}
+  }
+
+  Future<void> removePendingReadReceipt(String partnerId) async {
+    try {
+      final existing = await getPendingReadReceipts();
+      if (existing.remove(partnerId)) {
+        final file = await _getPendingReadReceiptsFile();
+        await file.writeAsString(jsonEncode(existing.toList()), flush: true);
+      }
     } catch (_) {}
   }
 }

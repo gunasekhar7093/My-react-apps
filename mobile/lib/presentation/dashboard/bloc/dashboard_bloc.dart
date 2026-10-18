@@ -40,14 +40,18 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     if (showLoading) emit(state.copyWith(status: DashboardStatus.loading, errorMessage: null));
     try {
       final users = await repository.getUsers();
-      if (_sameUsers(state.users, users)) {
+      final adjustedUsers = state.openChatUserId == null
+          ? users
+          : users.map((u) => u.id == state.openChatUserId ? u.copyWith(unreadCount: 0) : u).toList();
+
+      if (_sameUsers(state.users, adjustedUsers)) {
         if (state.status != DashboardStatus.ready) {
           emit(state.copyWith(status: DashboardStatus.ready, errorMessage: null));
         }
         _replayPendingMessages(emit);
         return;
       }
-      emit(state.copyWith(status: DashboardStatus.ready, users: users, errorMessage: null));
+      emit(state.copyWith(status: DashboardStatus.ready, users: adjustedUsers, errorMessage: null));
       _replayPendingMessages(emit);
     } catch (error) {
       emit(state.copyWith(
@@ -165,6 +169,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }).toList();
 
     emit(state.copyWith(users: users));
+    repository.saveCachedUsers(users);
 
     // If this contact does not exist in our local contact list yet, refresh user list immediately
     final exists = state.users.any((u) => u.id == otherUserId);
@@ -186,22 +191,15 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       return;
     }
 
-    // Chat opened — zero out the unread count for this user immediately
+    // Chat opened — zero out the unread count for this user immediately in state and persistent disk cache!
     final users = state.users.map((user) {
       if (user.id != openUserId) return user;
-      return UserModel(
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        phone: user.phone,
-        status: user.status,
-        lastSeenAt: user.lastSeenAt,
-        latestMessageAt: user.latestMessageAt,
-        unreadCount: 0,
-      );
+      return user.copyWith(unreadCount: 0);
     }).toList();
 
     emit(state.copyWith(users: users, openChatUserId: openUserId));
+    repository.saveCachedUsers(users);
+    repository.zeroUnreadCount(openUserId);
   }
 
   Future<void> _reconcileUnreadCount(String senderId) async {

@@ -58,6 +58,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       clearError: true,
     ));
 
+    // Immediately mark cached messages as read both locally and over network
+    add(const ChatMarkedRead());
+
     // If socket is already connected, flush any cached pending messages right away
     if (socket.isConnected) {
       add(const ChatFlushPendingRequested());

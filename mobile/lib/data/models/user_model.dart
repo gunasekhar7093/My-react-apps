@@ -44,4 +44,26 @@ class UserModel {
       'unreadCount': unreadCount,
     };
   }
+
+  UserModel copyWith({
+    String? id,
+    String? name,
+    String? username,
+    String? phone,
+    String? status,
+    String? lastSeenAt,
+    String? latestMessageAt,
+    int? unreadCount,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      username: username ?? this.username,
+      phone: phone ?? this.phone,
+      status: status ?? this.status,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      latestMessageAt: latestMessageAt ?? this.latestMessageAt,
+      unreadCount: unreadCount ?? this.unreadCount,
+    );
+  }
 }

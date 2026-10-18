@@ -216,9 +216,31 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     } catch (_) {}
   }
 
+  Future<void> _flushPendingReadReceipts() async {
+    try {
+      final currentUserId = context.read<AuthBloc>().state.user?.id;
+      if (currentUserId == null || currentUserId.isEmpty) return;
+      final pendingPartners = await MessageRepository().getPendingReadReceipts();
+      if (pendingPartners.isEmpty) return;
+
+      for (final partnerId in pendingPartners) {
+        if (!_socket.isConnected) break;
+        _socket.emitMessagesRead(partnerId);
+        try {
+          await ApiClient().post(
+            '/api/messages/$currentUserId/$partnerId/read',
+            authenticated: true,
+          );
+          await MessageRepository().removePendingReadReceipt(partnerId);
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   Future<void> _connectSocket() async {
     _socket.addOnConnect(() {
       _flushAllPendingMessages();
+      _flushPendingReadReceipts();
       _preSyncRecentConversations();
     });
     await _socket.connect(
