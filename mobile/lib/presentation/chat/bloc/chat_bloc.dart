@@ -149,11 +149,14 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
     // If this is our own message echo from server, check if it matches a pending message
     if (message.senderId == userId) {
+      // 1. Direct match by clientTempId (exact 1-to-1 match)
+      // 2. Fallback match by matching temp_ id or pending state with identical text/media
       final pendingIdx = state.messages.indexWhere(
         (m) =>
-            (m.isPending || m.id.startsWith('temp_')) &&
-            (m.text == message.text ||
-                (m.mediaUrl != null && m.mediaUrl == message.mediaUrl)),
+            (message.clientTempId != null && m.id == message.clientTempId) ||
+            ((m.isPending || m.id.startsWith('temp_')) &&
+                (m.text == message.text ||
+                    (m.mediaUrl != null && m.mediaUrl == message.mediaUrl))),
       );
       if (pendingIdx != -1) {
         final tempId = state.messages[pendingIdx].id;
@@ -167,6 +170,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           tempId: tempId,
           confirmedMessage: message,
         );
+        return;
+      }
+
+      // If clientTempId was already processed or message already exists, ignore duplicate echo
+      if (message.clientTempId != null &&
+          state.messages.any((item) => item.clientTempId == message.clientTempId || item.id == message.id)) {
         return;
       }
     }
@@ -202,6 +211,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
     final pendingMessage = MessageModel(
       id: tempId,
+      clientTempId: tempId,
       senderId: userId,
       receiverId: otherUserId,
       text: text,
@@ -234,12 +244,15 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       await repository.savePendingMessage(pendingMessage);
     }
 
-    // If socket is connected, attempt sending immediately
+    // If socket is connected, attempt sending immediately with in-flight lock
     if (isOnline) {
+      if (repository.isMessageInFlight(tempId)) return;
+      repository.markMessageInFlight(tempId);
       try {
         final res = await socket.sendMessage(
           receiverId: otherUserId,
           text: text,
+          clientTempId: tempId,
           mediaUrl: event.mediaUrl,
           mediaType: event.mediaType,
           mediaName: event.mediaName,
@@ -268,63 +281,76 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         await repository.savePendingMessage(markedPending);
         final updated = state.messages.map((m) => m.id == tempId ? markedPending : m).toList();
         emit(state.copyWith(messages: updated));
+      } finally {
+        repository.clearMessageInFlight(tempId);
       }
     }
   }
+
+  bool _isFlushing = false;
 
   Future<void> _onFlushPendingRequested(
     ChatFlushPendingRequested event,
     Emitter<ChatState> emit,
   ) async {
-    if (!socket.isConnected) return;
+    if (!socket.isConnected || _isFlushing) return;
+    _isFlushing = true;
+    try {
+      final pendingList = await repository.getPendingMessages(
+        userId: userId,
+        otherUserId: otherUserId,
+      );
 
-    final pendingList = await repository.getPendingMessages(
-      userId: userId,
-      otherUserId: otherUserId,
-    );
-
-    final queueMap = <String, MessageModel>{};
-    for (final m in state.messages) {
-      if (m.isPending || m.id.startsWith('temp_')) {
+      final queueMap = <String, MessageModel>{};
+      for (final m in state.messages) {
+        if (m.isPending || m.id.startsWith('temp_')) {
+          queueMap[m.id] = m;
+        }
+      }
+      for (final m in pendingList) {
         queueMap[m.id] = m;
       }
-    }
-    for (final m in pendingList) {
-      queueMap[m.id] = m;
-    }
 
-    if (queueMap.isEmpty) return;
+      if (queueMap.isEmpty) return;
 
-    final queue = queueMap.values.toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final queue = queueMap.values.toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-    for (final pending in queue) {
-      if (!socket.isConnected) break;
-      try {
-        final res = await socket.sendMessage(
-          receiverId: otherUserId,
-          text: pending.text,
-          mediaUrl: pending.mediaUrl,
-          mediaType: pending.mediaType,
-          mediaName: pending.mediaName,
-          mediaSize: pending.mediaSize,
-        );
-        final confirmedRaw = res['message'];
-        if (confirmedRaw is Map) {
-          final confirmed = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
-          await repository.replacePendingMessage(
-            userId: userId,
-            otherUserId: otherUserId,
-            tempId: pending.id,
-            confirmedMessage: confirmed,
+      for (final pending in queue) {
+        if (!socket.isConnected) break;
+        if (repository.isMessageInFlight(pending.id)) continue;
+        repository.markMessageInFlight(pending.id);
+        try {
+          final res = await socket.sendMessage(
+            receiverId: otherUserId,
+            text: pending.text,
+            clientTempId: pending.clientTempId ?? pending.id,
+            mediaUrl: pending.mediaUrl,
+            mediaType: pending.mediaType,
+            mediaName: pending.mediaName,
+            mediaSize: pending.mediaSize,
           );
-          final updated = state.messages.map((m) => m.id == pending.id ? confirmed : m).toList();
-          emit(state.copyWith(messages: updated));
+          final confirmedRaw = res['message'];
+          if (confirmedRaw is Map) {
+            final confirmed = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
+            await repository.replacePendingMessage(
+              userId: userId,
+              otherUserId: otherUserId,
+              tempId: pending.id,
+              confirmedMessage: confirmed,
+            );
+            final updated = state.messages.map((m) => m.id == pending.id ? confirmed : m).toList();
+            emit(state.copyWith(messages: updated));
+          }
+        } catch (_) {
+          // Disconnected or socket error; pause flush and resume on next connect
+          break;
+        } finally {
+          repository.clearMessageInFlight(pending.id);
         }
-      } catch (_) {
-        // Disconnected or socket error; pause flush and resume on next connect
-        break;
       }
+    } finally {
+      _isFlushing = false;
     }
   }
 

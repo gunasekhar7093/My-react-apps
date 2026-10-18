@@ -147,45 +147,58 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
+  bool _isFlushingPending = false;
   Future<void> _flushAllPendingMessages() async {
-    if (!_socket.isConnected) return;
-    final localStorage = LocalStorageService();
-    final allPending = await localStorage.getPendingMessages();
-    if (allPending.isEmpty) return;
+    if (!_socket.isConnected || _isFlushingPending) return;
+    _isFlushingPending = true;
+    try {
+      final openChatId = _bloc.state.openChatUserId;
+      final localStorage = LocalStorageService();
+      final allPending = await localStorage.getPendingMessages();
+      if (allPending.isEmpty) return;
 
-    for (final pending in allPending) {
-      if (!_socket.isConnected) break;
-      try {
-        final res = await _socket.sendMessage(
-          receiverId: pending.receiverId,
-          text: pending.text,
-          mediaUrl: pending.mediaUrl,
-          mediaType: pending.mediaType,
-          mediaName: pending.mediaName,
-          mediaSize: pending.mediaSize,
-        );
-        final confirmedRaw = res['message'];
-        if (confirmedRaw is Map) {
-          final confirmed = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
-          await localStorage.replacePendingMessage(
-            pending.senderId,
-            pending.receiverId,
-            pending.id,
-            confirmed,
-          );
+      for (final pending in allPending) {
+        if (!_socket.isConnected) break;
+        // Never touch messages belonging to currently open chat — ChatBloc handles its own open chat!
+        if (openChatId != null && (pending.receiverId == openChatId || pending.senderId == openChatId)) {
+          continue;
         }
-      } catch (_) {
-        break;
+        if (localStorage.isMessageInFlight(pending.id)) continue;
+        localStorage.markMessageInFlight(pending.id);
+        try {
+          final res = await _socket.sendMessage(
+            receiverId: pending.receiverId,
+            text: pending.text,
+            clientTempId: pending.id,
+            mediaUrl: pending.mediaUrl,
+            mediaType: pending.mediaType,
+            mediaName: pending.mediaName,
+            mediaSize: pending.mediaSize,
+          );
+          final confirmedRaw = res['message'];
+          if (confirmedRaw is Map) {
+            final confirmed = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
+            await localStorage.replacePendingMessage(
+              pending.senderId,
+              pending.receiverId,
+              pending.id,
+              confirmed,
+            );
+          }
+        } catch (_) {
+          break;
+        } finally {
+          localStorage.clearMessageInFlight(pending.id);
+        }
       }
+    } finally {
+      _isFlushingPending = false;
     }
   }
 
   Future<void> _connectSocket() async {
     _socket.addOnConnect(_flushAllPendingMessages);
     await _socket.connect(
-      onConnected: () {
-        _flushAllPendingMessages();
-      },
       onUserStatus: ({required String userId, required String status, String? lastSeenAt}) {
         if (mounted) {
           _bloc.add(DashboardUserStatusChanged(userId: userId, status: status, lastSeenAt: lastSeenAt));

@@ -269,6 +269,7 @@ class SocketService {
   Future<Map<String, dynamic>> sendMessage({
     required String receiverId,
     String text = '',
+    String? clientTempId,
     String? mediaUrl,
     String? mediaType,
     String? mediaName,
@@ -286,6 +287,7 @@ class SocketService {
       {
         'receiverId': receiverId,
         'text': text,
+        if (clientTempId != null) 'clientTempId': clientTempId,
         if (mediaUrl != null) 'mediaUrl': mediaUrl,
         if (mediaType != null) 'mediaType': mediaType,
         if (mediaName != null) 'mediaName': mediaName,

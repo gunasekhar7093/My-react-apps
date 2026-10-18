@@ -7,6 +7,7 @@ enum MessageStatus {
 
 class MessageModel {
   final String id;
+  final String? clientTempId;
   final String senderId;
   final String receiverId;
   final String text;
@@ -22,6 +23,7 @@ class MessageModel {
 
   const MessageModel({
     required this.id,
+    this.clientTempId,
     required this.senderId,
     required this.receiverId,
     required this.text,
@@ -56,6 +58,7 @@ class MessageModel {
   factory MessageModel.fromJson(Map<String, dynamic> json) {
     return MessageModel(
       id: json['id']?.toString() ?? '',
+      clientTempId: json['clientTempId']?.toString(),
       senderId: json['senderId']?.toString() ?? '',
       receiverId: json['receiverId']?.toString() ?? '',
       text: json['text']?.toString() ?? '',
@@ -76,6 +79,7 @@ class MessageModel {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'clientTempId': ?clientTempId,
       'senderId': senderId,
       'receiverId': receiverId,
       'text': text,
@@ -93,6 +97,7 @@ class MessageModel {
 
   MessageModel copyWith({
     String? id,
+    String? clientTempId,
     String? senderId,
     String? receiverId,
     String? text,
@@ -108,6 +113,7 @@ class MessageModel {
   }) {
     return MessageModel(
       id: id ?? this.id,
+      clientTempId: clientTempId ?? this.clientTempId,
       senderId: senderId ?? this.senderId,
       receiverId: receiverId ?? this.receiverId,
       text: text ?? this.text,

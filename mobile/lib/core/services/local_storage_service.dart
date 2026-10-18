@@ -200,6 +200,13 @@ class LocalStorageService {
 
   // ── Offline Pending Outbox Queue ──────────────────────────────────────────
 
+  // In-flight sending tracker to prevent duplicate concurrent socket sends
+  static final Set<String> _inFlightMessageIds = {};
+
+  bool isMessageInFlight(String id) => _inFlightMessageIds.contains(id);
+  void markMessageInFlight(String id) => _inFlightMessageIds.add(id);
+  void clearMessageInFlight(String id) => _inFlightMessageIds.remove(id);
+
   Future<File> _getPendingQueueFile() async {
     final dir = await _getCacheDirectory();
     return File('${dir.path}/pending_outbox_queue.json');

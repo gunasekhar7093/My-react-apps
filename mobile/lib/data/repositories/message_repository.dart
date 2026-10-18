@@ -151,5 +151,10 @@ class MessageRepository {
   Future<void> removePendingMessage(String tempId) async {
     await localStorage.removePendingMessage(tempId);
   }
+
+  bool isMessageInFlight(String id) => localStorage.isMessageInFlight(id);
+  void markMessageInFlight(String id) => localStorage.markMessageInFlight(id);
+  void clearMessageInFlight(String id) => localStorage.clearMessageInFlight(id);
 }
+
 

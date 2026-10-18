@@ -1027,6 +1027,23 @@ io.on('connection', async (socket) => {
         return done({ ok: false, error: 'Recipient not found' })
       }
 
+      const clientTempId = typeof payload?.clientTempId === 'string'
+        ? payload.clientTempId.trim()
+        : (typeof payload?.tempId === 'string' ? payload.tempId.trim() : null)
+
+      // Idempotency check: if client retried or multiple flushes ran, return existing message immediately
+      if (clientTempId) {
+        const existing = await messagesCollection.findOne({
+          senderId: userId,
+          receiverId,
+          clientTempId,
+        })
+        if (existing) {
+          console.log(`[Socket] Duplicate message ignored for clientTempId: ${clientTempId}`)
+          return done({ ok: true, message: existing })
+        }
+      }
+
       const sender = await getUserById(userId)
       const senderName = sender?.name || sender?.username || 'User'
 
@@ -1036,6 +1053,7 @@ io.on('connection', async (socket) => {
 
       const message = {
         id: 'm' + Date.now() + randomBytes(6).toString('hex'),
+        clientTempId,
         senderId: userId,
         senderName,
         receiverId,
