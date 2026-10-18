@@ -150,7 +150,10 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     // If this is our own message echo from server, check if it matches a pending message
     if (message.senderId == userId) {
       final pendingIdx = state.messages.indexWhere(
-        (m) => m.isPending && (m.text == message.text || (m.mediaUrl != null && m.mediaUrl == message.mediaUrl)),
+        (m) =>
+            (m.isPending || m.id.startsWith('temp_')) &&
+            (m.text == message.text ||
+                (m.mediaUrl != null && m.mediaUrl == message.mediaUrl)),
       );
       if (pendingIdx != -1) {
         final tempId = state.messages[pendingIdx].id;
@@ -195,6 +198,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
     final tempId = 'temp_${DateTime.now().microsecondsSinceEpoch}';
     final nowIso = DateTime.now().toIso8601String();
+    final isOnline = socket.isConnected;
+
     final pendingMessage = MessageModel(
       id: tempId,
       senderId: userId,
@@ -205,26 +210,32 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       mediaType: event.mediaType,
       mediaName: event.mediaName,
       mediaSize: event.mediaSize,
-      isPending: true,
+      isPending: !isOnline,
     );
 
-    // Optimistically add to conversation with Clock Icon (🕒 MessageStatus.pending)
+    // Optimistically add to conversation:
+    // If online: immediately shows Single Tick (✓ MessageStatus.sent) with ZERO clock flicker!
+    // If offline: immediately shows Clock Icon (🕒 MessageStatus.pending).
     emit(state.copyWith(
       messages: [...state.messages, pendingMessage],
       status: ChatStatus.ready,
       clearError: true,
     ));
 
-    // Save locally to both message cache and pending outbox queue
+    // Save locally to message cache
     await repository.saveSingleMessage(
       userId: userId,
       otherUserId: otherUserId,
       message: pendingMessage,
     );
-    await repository.savePendingMessage(pendingMessage);
+
+    // If offline, queue in pending outbox for automatic retry when internet returns
+    if (!isOnline) {
+      await repository.savePendingMessage(pendingMessage);
+    }
 
     // If socket is connected, attempt sending immediately
-    if (socket.isConnected) {
+    if (isOnline) {
       try {
         final res = await socket.sendMessage(
           receiverId: otherUserId,
@@ -247,8 +258,16 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           emit(state.copyWith(messages: updated));
         }
       } catch (_) {
-        // If offline or network error, message safely remains in pending queue with Clock Icon.
-        // It will automatically be sent once internet connection is restored!
+        // If sending failed (network drop/timeout), transition to Clock Icon (🕒) and queue
+        final markedPending = pendingMessage.copyWith(isPending: true);
+        await repository.saveSingleMessage(
+          userId: userId,
+          otherUserId: otherUserId,
+          message: markedPending,
+        );
+        await repository.savePendingMessage(markedPending);
+        final updated = state.messages.map((m) => m.id == tempId ? markedPending : m).toList();
+        emit(state.copyWith(messages: updated));
       }
     }
   }
@@ -266,7 +285,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
     final queueMap = <String, MessageModel>{};
     for (final m in state.messages) {
-      if (m.isPending) {
+      if (m.isPending || m.id.startsWith('temp_')) {
         queueMap[m.id] = m;
       }
     }
