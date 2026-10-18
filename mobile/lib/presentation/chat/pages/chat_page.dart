@@ -1170,27 +1170,32 @@ class _Bubble extends StatelessWidget {
     final timeWidth = timePainter.width + (mine ? 18 : 6);
 
     final lineMetrics = textPainter.computeLineMetrics();
-    final isSingleLine = lineMetrics.length <= 1;
-    final fitsInline = textPainter.width + 10 + timeWidth <= contentMaxWidth;
+    final lastLineWidth = lineMetrics.isNotEmpty ? lineMetrics.last.width : textPainter.width;
+    final fitsOnLastLine = (lastLineWidth + 8 + timeWidth) <= contentMaxWidth;
 
-    if (isSingleLine && fitsInline) {
-      // Single line text: compact inline pill taking only necessary space
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(message.text, style: textStyle),
-          const SizedBox(width: 10),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 0.5),
-            child: timeWidget,
-          ),
-        ],
+    if (fitsOnLastLine) {
+      // WhatsApp style: When the last line has room for the timestamp,
+      // render the timestamp directly inline on the last line.
+      // This applies to both single-line messages ("Hello 12:02 pm")
+      // and multi-line messages/lists ("Apple \n Mango \n Orenge 12:02 pm").
+      return Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(text: message.text, style: textStyle),
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 7, bottom: 1),
+                child: timeWidget,
+              ),
+            ),
+          ],
+        ),
       );
     }
 
-    // Multi-line: Hug the text width instead of stretching across the screen,
-    // keeping text naturally left-aligned and timestamp at the bottom-right.
+    // When the last line is full (reaches contentMaxWidth), the timestamp
+    // drops to a dedicated line below, aligned to the bottom-right.
     final bubbleWidth = (textPainter.width > timeWidth ? textPainter.width : timeWidth).clamp(0.0, contentMaxWidth);
     return SizedBox(
       width: bubbleWidth,
