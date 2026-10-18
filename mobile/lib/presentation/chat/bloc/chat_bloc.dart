@@ -73,7 +73,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       );
       final serverIds = result.messages.map((m) => m.id).toSet();
       final stillPending = pendingList.where((p) => !serverIds.contains(p.id)).toList();
-      final combined = [...result.messages, ...stillPending];
+      final combined = [...result.messages, ...stillPending]
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
       emit(state.copyWith(
         status: ChatStatus.ready,
@@ -181,7 +182,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
 
     if (state.messages.any((item) => item.id == message.id)) return;
-    emit(state.copyWith(messages: [...state.messages, message], status: ChatStatus.ready));
+    final newMessages = [...state.messages, message]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    emit(state.copyWith(messages: newMessages, status: ChatStatus.ready));
 
     // Save to local cache
     repository.saveSingleMessage(
@@ -206,8 +209,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     if (text.isEmpty && (event.mediaUrl == null || event.mediaUrl!.isEmpty)) return;
 
     final tempId = 'temp_${DateTime.now().microsecondsSinceEpoch}';
-    final nowIso = DateTime.now().toIso8601String();
-    final isOnline = socket.isConnected;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final hasPendingBefore = state.messages.any((m) => m.isPending || m.id.startsWith('temp_'));
+    final isOnline = socket.isConnected && !hasPendingBefore;
 
     final pendingMessage = MessageModel(
       id: tempId,
@@ -224,10 +228,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     );
 
     // Optimistically add to conversation:
-    // If online: immediately shows Single Tick (✓ MessageStatus.sent) with ZERO clock flicker!
-    // If offline: immediately shows Clock Icon (🕒 MessageStatus.pending).
+    // If online with empty queue: immediately shows Single Tick (✓ MessageStatus.sent)
+    // If offline or queue has earlier pending messages: shows Clock Icon (🕒) to preserve FIFO sequence
+    final currentList = [...state.messages, pendingMessage]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
     emit(state.copyWith(
-      messages: [...state.messages, pendingMessage],
+      messages: currentList,
       status: ChatStatus.ready,
       clearError: true,
     ));
@@ -239,51 +246,60 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       message: pendingMessage,
     );
 
-    // If offline, queue in pending outbox for automatic retry when internet returns
+    // If offline or previous messages are still pending, queue in pending outbox
     if (!isOnline) {
       await repository.savePendingMessage(pendingMessage);
+      if (socket.isConnected) {
+        add(const ChatFlushPendingRequested());
+      }
+      return;
     }
 
-    // If socket is connected, attempt sending immediately with in-flight lock
-    if (isOnline) {
-      if (repository.isMessageInFlight(tempId)) return;
-      repository.markMessageInFlight(tempId);
-      try {
-        final res = await socket.sendMessage(
-          receiverId: otherUserId,
-          text: text,
-          clientTempId: tempId,
-          mediaUrl: event.mediaUrl,
-          mediaType: event.mediaType,
-          mediaName: event.mediaName,
-          mediaSize: event.mediaSize,
-        );
-        final confirmedRaw = res['message'];
-        if (confirmedRaw is Map) {
-          final confirmedMessage = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
-          await repository.replacePendingMessage(
-            userId: userId,
-            otherUserId: otherUserId,
-            tempId: tempId,
-            confirmedMessage: confirmedMessage,
-          );
-          final updated = state.messages.map((m) => m.id == tempId ? confirmedMessage : m).toList();
-          emit(state.copyWith(messages: updated));
-        }
-      } catch (_) {
-        // If sending failed (network drop/timeout), transition to Clock Icon (🕒) and queue
-        final markedPending = pendingMessage.copyWith(isPending: true);
-        await repository.saveSingleMessage(
+    // If socket is connected and no pending queue ahead, attempt sending immediately
+    if (repository.isMessageInFlight(tempId)) return;
+    repository.markMessageInFlight(tempId);
+    try {
+      final res = await socket.sendMessage(
+        receiverId: otherUserId,
+        text: text,
+        clientTempId: tempId,
+        createdAt: nowIso,
+        mediaUrl: event.mediaUrl,
+        mediaType: event.mediaType,
+        mediaName: event.mediaName,
+        mediaSize: event.mediaSize,
+      );
+      final confirmedRaw = res['message'];
+      if (confirmedRaw is Map) {
+        final confirmedMessage = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
+        await repository.replacePendingMessage(
           userId: userId,
           otherUserId: otherUserId,
-          message: markedPending,
+          tempId: tempId,
+          confirmedMessage: confirmedMessage,
         );
-        await repository.savePendingMessage(markedPending);
-        final updated = state.messages.map((m) => m.id == tempId ? markedPending : m).toList();
+        final updated = state.messages
+            .map((m) => m.id == tempId ? confirmedMessage : m)
+            .toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
         emit(state.copyWith(messages: updated));
-      } finally {
-        repository.clearMessageInFlight(tempId);
       }
+    } catch (_) {
+      // If sending failed (network drop/timeout), transition to Clock Icon (🕒) and queue
+      final markedPending = pendingMessage.copyWith(isPending: true);
+      await repository.saveSingleMessage(
+        userId: userId,
+        otherUserId: otherUserId,
+        message: markedPending,
+      );
+      await repository.savePendingMessage(markedPending);
+      final updated = state.messages
+          .map((m) => m.id == tempId ? markedPending : m)
+          .toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      emit(state.copyWith(messages: updated));
+    } finally {
+      repository.clearMessageInFlight(tempId);
     }
   }
 
@@ -325,6 +341,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
             receiverId: otherUserId,
             text: pending.text,
             clientTempId: pending.clientTempId ?? pending.id,
+            createdAt: pending.createdAt,
             mediaUrl: pending.mediaUrl,
             mediaType: pending.mediaType,
             mediaName: pending.mediaName,
@@ -339,7 +356,10 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
               tempId: pending.id,
               confirmedMessage: confirmed,
             );
-            final updated = state.messages.map((m) => m.id == pending.id ? confirmed : m).toList();
+            final updated = state.messages
+                .map((m) => m.id == pending.id ? confirmed : m)
+                .toList()
+              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
             emit(state.copyWith(messages: updated));
           }
         } catch (_) {

@@ -170,6 +170,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             receiverId: pending.receiverId,
             text: pending.text,
             clientTempId: pending.id,
+            createdAt: pending.createdAt,
             mediaUrl: pending.mediaUrl,
             mediaType: pending.mediaType,
             mediaName: pending.mediaName,

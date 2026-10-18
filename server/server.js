@@ -1049,6 +1049,10 @@ io.on('connection', async (socket) => {
 
       const isReceiverOnline = onlineConnections.has(receiverId) && (onlineConnections.get(receiverId)?.size || 0) > 0
       const now = new Date().toISOString()
+      const clientCreatedAt = typeof payload?.createdAt === 'string' && payload.createdAt.trim().length > 0
+        ? payload.createdAt.trim()
+        : null
+      const messageCreatedAt = clientCreatedAt || now
       const deliveredAt = isReceiverOnline ? now : null
 
       const message = {
@@ -1062,7 +1066,7 @@ io.on('connection', async (socket) => {
         mediaType,
         mediaName,
         mediaSize,
-        createdAt: now,
+        createdAt: messageCreatedAt,
         deliveredAt,
         readAt: null,
         status: deliveredAt ? 'delivered' : 'sent',

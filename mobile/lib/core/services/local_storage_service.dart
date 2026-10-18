@@ -225,14 +225,16 @@ class LocalStorageService {
           .map((item) => MessageModel.fromJson(Map<String, dynamic>.from(item)))
           .toList();
 
+      List<MessageModel> filtered = list;
       if (userId != null && otherUserId != null) {
-        return list
+        filtered = list
             .where((m) =>
                 (m.senderId == userId && m.receiverId == otherUserId) ||
                 (m.senderId == otherUserId && m.receiverId == userId))
             .toList();
       }
-      return list;
+      filtered.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return filtered;
     } catch (_) {
       return const [];
     }
@@ -243,8 +245,10 @@ class LocalStorageService {
       final existing = await getPendingMessages();
       final map = <String, MessageModel>{for (final m in existing) m.id: m};
       map[message.id] = message;
+      final sortedList = map.values.toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       final file = await _getPendingQueueFile();
-      final jsonList = map.values.map((m) => m.toJson()).toList();
+      final jsonList = sortedList.map((m) => m.toJson()).toList();
       await file.writeAsString(jsonEncode(jsonList), flush: true);
     } catch (_) {}
   }
@@ -252,7 +256,8 @@ class LocalStorageService {
   Future<void> removePendingMessage(String tempId) async {
     try {
       final existing = await getPendingMessages();
-      final filtered = existing.where((m) => m.id != tempId).toList();
+      final filtered = existing.where((m) => m.id != tempId).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       final file = await _getPendingQueueFile();
       final jsonList = filtered.map((m) => m.toJson()).toList();
       await file.writeAsString(jsonEncode(jsonList), flush: true);
