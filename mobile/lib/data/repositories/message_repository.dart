@@ -1,43 +1,122 @@
 import '../../core/network/api_client.dart';
+import '../../core/services/local_storage_service.dart';
 import '../models/message_model.dart';
+
+class MessagesResult {
+  final List<MessageModel> messages;
+  final bool hasMore;
+
+  const MessagesResult({
+    required this.messages,
+    this.hasMore = false,
+  });
+}
 
 class MessageRepository {
   final ApiClient apiClient;
+  final LocalStorageService localStorage;
 
-  MessageRepository({ApiClient? apiClient})
-      : apiClient = apiClient ?? ApiClient();
+  MessageRepository({
+    ApiClient? apiClient,
+    LocalStorageService? localStorage,
+  })  : apiClient = apiClient ?? ApiClient(),
+        localStorage = localStorage ?? LocalStorageService();
 
-  Future<List<MessageModel>> getMessages({
+  Future<List<MessageModel>> getCachedMessages({
     required String userId,
     required String otherUserId,
+  }) async {
+    return localStorage.getMessages(userId, otherUserId);
+  }
+
+  Future<MessagesResult> getMessages({
+    required String userId,
+    required String otherUserId,
+    String? before,
     int limit = 40,
   }) async {
-    final data = await apiClient.get(
-      '/api/messages/$userId/$otherUserId?limit=$limit',
-      authenticated: true,
-    );
-    final messages = data['messages'];
-    if (messages is! List) return const [];
-    return messages
-        .whereType<Map>()
-        .map((m) => MessageModel.fromJson(Map<String, dynamic>.from(m)))
-        .toList();
+    try {
+      final query = before != null && before.isNotEmpty
+          ? '?limit=$limit&before=${Uri.encodeComponent(before)}'
+          : '?limit=$limit';
+
+      final data = await apiClient.get(
+        '/api/messages/$userId/$otherUserId$query',
+        authenticated: true,
+      );
+      final rawList = data['messages'];
+      final hasMore = data['hasMore'] == true;
+      if (rawList is! List) {
+        return MessagesResult(messages: const [], hasMore: hasMore);
+      }
+      final fetched = rawList
+          .whereType<Map>()
+          .map((m) => MessageModel.fromJson(Map<String, dynamic>.from(m)))
+          .toList();
+
+      if (fetched.isNotEmpty) {
+        await localStorage.saveMessages(userId, otherUserId, fetched);
+      }
+
+      return MessagesResult(messages: fetched, hasMore: hasMore);
+    } catch (e) {
+      if (before == null) {
+        final cached = await localStorage.getMessages(userId, otherUserId);
+        if (cached.isNotEmpty) {
+          return MessagesResult(messages: cached, hasMore: false);
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> saveSingleMessage({
+    required String userId,
+    required String otherUserId,
+    required MessageModel message,
+  }) async {
+    await localStorage.appendSingleMessage(userId, otherUserId, message);
   }
 
   Future<void> markAsRead({
     required String userId,
     required String otherUserId,
   }) async {
-    await apiClient.post(
-      '/api/messages/$userId/$otherUserId/read',
-      authenticated: true,
-    );
+    final now = DateTime.now().toIso8601String();
+    await localStorage.markMessagesAsRead(userId, otherUserId, readAt: now);
+    try {
+      await apiClient.post(
+        '/api/messages/$userId/$otherUserId/read',
+        authenticated: true,
+      );
+    } catch (_) {}
   }
 
-  Future<void> deleteMessage(String messageId) async {
-    await apiClient.delete(
-      '/api/messages/$messageId',
-      authenticated: true,
+  Future<void> deleteMessage({
+    required String userId,
+    required String otherUserId,
+    required String messageId,
+  }) async {
+    await localStorage.deleteMessage(userId, otherUserId, messageId);
+    try {
+      await apiClient.delete(
+        '/api/messages/$messageId',
+        authenticated: true,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> updateDelivered({
+    required String userId,
+    required String otherUserId,
+    required List<String> messageIds,
+    required String deliveredAt,
+  }) async {
+    await localStorage.markMessagesAsDelivered(
+      userId,
+      otherUserId,
+      messageIds,
+      deliveredAt: deliveredAt,
     );
   }
 }

@@ -57,3 +57,7 @@ class ChatMessageDeletedReceived extends ChatEvent {
   final String messageId;
   const ChatMessageDeletedReceived(this.messageId);
 }
+
+class ChatLoadOlderMessagesRequested extends ChatEvent {
+  const ChatLoadOlderMessagesRequested();
+}

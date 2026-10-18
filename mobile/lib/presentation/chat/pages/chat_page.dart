@@ -79,7 +79,17 @@ class _ChatPageState extends State<ChatPage> {
       userId: widget.currentUserId,
       otherUserId: widget.user.id,
     )..add(const ChatStarted());
+    _scrollController.addListener(_onScroll);
     _registerSocketCallbacks();
+  }
+
+  void _onScroll() {
+    if (_scrollController.hasClients) {
+      // In reverse: true ListView, maxScrollExtent is the top of the chat (oldest messages)
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 250) {
+        _bloc.add(const ChatLoadOlderMessagesRequested());
+      }
+    }
   }
 
   /// Register this page's callbacks on the already-connected shared socket.
@@ -176,6 +186,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   @override void dispose() {
+    _scrollController.removeListener(_onScroll);
     _controller.dispose();
     _scrollController.dispose();
     // Remove our callbacks from the shared socket but DO NOT disconnect it —
@@ -841,8 +852,20 @@ class _ChatPageState extends State<ChatPage> {
                           controller: _scrollController,
                           reverse: true,
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                          itemCount: state.messages.length,
+                          itemCount: state.messages.length + (state.loadingOlder ? 1 : 0),
                           itemBuilder: (context, index) {
+                            if (index == state.messages.length) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 14),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                ),
+                              );
+                            }
                             final chronologicalIndex = state.messages.length - 1 - index;
                             final current = state.messages[chronologicalIndex];
                             final showDateHeader = chronologicalIndex == 0 ||

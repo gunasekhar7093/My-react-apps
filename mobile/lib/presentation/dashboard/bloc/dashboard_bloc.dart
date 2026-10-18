@@ -21,8 +21,11 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   }
 
   Future<void> _onStarted(DashboardStarted event, Emitter<DashboardState> emit) async {
-    if (state.users.isNotEmpty) return;
-    await _loadUsers(emit, showLoading: true);
+    final cached = await repository.getCachedUsers();
+    if (cached.isNotEmpty && state.users.isEmpty) {
+      emit(state.copyWith(status: DashboardStatus.ready, users: cached, errorMessage: null));
+    }
+    await _loadUsers(emit, showLoading: state.users.isEmpty);
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       add(const DashboardUsersRefreshRequested());
@@ -49,7 +52,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (error) {
       emit(state.copyWith(
         status: state.users.isEmpty ? DashboardStatus.failure : DashboardStatus.ready,
-        errorMessage: error.toString(),
+        errorMessage: state.users.isEmpty ? error.toString() : null,
       ));
     }
   }

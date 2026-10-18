@@ -29,6 +29,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatMessagesDeliveredReceived>(_onMessagesDeliveredReceived);
     on<ChatMessageDeleteRequested>(_onDeleteRequested);
     on<ChatMessageDeletedReceived>(_onDeletedReceived);
+    on<ChatLoadOlderMessagesRequested>(_onLoadOlderMessagesRequested);
   }
 
   Future<void> _onStarted(ChatStarted event, Emitter<ChatState> emit) async {
@@ -36,17 +37,38 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       return;
     }
     NotificationService().cancelSenderNotification(otherUserId);
-    emit(state.copyWith(status: ChatStatus.loading, clearError: true));
+
+    // 1. Immediately load and emit cached messages so offline users can view chat history instantly
+    final cached = await repository.getCachedMessages(
+      userId: userId,
+      otherUserId: otherUserId,
+    );
+    if (cached.isNotEmpty) {
+      emit(state.copyWith(
+        status: ChatStatus.ready,
+        messages: cached,
+        clearError: true,
+      ));
+    } else {
+      emit(state.copyWith(status: ChatStatus.loading, clearError: true));
+    }
+
+    // 2. Fetch latest messages from server in background
     try {
-      final messages = await repository.getMessages(
+      final result = await repository.getMessages(
         userId: userId,
         otherUserId: otherUserId,
       );
-      emit(state.copyWith(status: ChatStatus.ready, messages: messages));
+      emit(state.copyWith(
+        status: ChatStatus.ready,
+        messages: result.messages,
+        hasMoreOlder: result.hasMore,
+        clearError: true,
+      ));
       add(const ChatMarkedRead());
 
       // Acknowledge delivery for all incoming messages that haven't been delivered
-      final undeliveredIds = messages
+      final undeliveredIds = result.messages
           .where((m) => m.receiverId == userId && (m.deliveredAt == null || m.deliveredAt!.isEmpty))
           .map((m) => m.id)
           .toList();
@@ -54,10 +76,46 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         socket.emitMessagesDelivered(undeliveredIds);
       }
     } catch (error) {
+      // If we already have cached messages in state, stay in ready state so user can view history!
       emit(state.copyWith(
-        status: ChatStatus.failure,
-        errorMessage: error.toString(),
+        status: state.messages.isNotEmpty ? ChatStatus.ready : ChatStatus.failure,
+        errorMessage: state.messages.isNotEmpty ? null : error.toString(),
       ));
+    }
+  }
+
+  Future<void> _onLoadOlderMessagesRequested(
+    ChatLoadOlderMessagesRequested event,
+    Emitter<ChatState> emit,
+  ) async {
+    if (state.loadingOlder || !state.hasMoreOlder || state.messages.isEmpty) return;
+
+    emit(state.copyWith(loadingOlder: true));
+    try {
+      final oldest = state.messages.first;
+      final result = await repository.getMessages(
+        userId: userId,
+        otherUserId: otherUserId,
+        before: oldest.createdAt,
+      );
+
+      if (result.messages.isEmpty) {
+        emit(state.copyWith(loadingOlder: false, hasMoreOlder: false));
+        return;
+      }
+
+      final existingIds = state.messages.map((m) => m.id).toSet();
+      final newOlder = result.messages.where((m) => !existingIds.contains(m.id)).toList();
+
+      final combined = [...newOlder, ...state.messages];
+      emit(state.copyWith(
+        loadingOlder: false,
+        messages: combined,
+        hasMoreOlder: result.hasMore,
+      ));
+    } catch (_) {
+      // If offline or network error while scrolling back, gracefully finish loading
+      emit(state.copyWith(loadingOlder: false));
     }
   }
 
@@ -70,6 +128,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
     if (state.messages.any((item) => item.id == message.id)) return;
     emit(state.copyWith(messages: [...state.messages, message], status: ChatStatus.ready));
+
+    // Save to local cache
+    repository.saveSingleMessage(
+      userId: userId,
+      otherUserId: otherUserId,
+      message: message,
+    );
 
     if (message.senderId == otherUserId) {
       // Chat is open: dismiss notifications, acknowledge delivery, and mark read immediately
@@ -145,6 +210,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       return m;
     }).toList();
     emit(state.copyWith(messages: updated));
+
+    repository.updateDelivered(
+      userId: userId,
+      otherUserId: otherUserId,
+      messageIds: event.messageIds,
+      deliveredAt: event.deliveredAt,
+    );
   }
 
   Future<void> _onDeleteRequested(
@@ -155,7 +227,11 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     emit(state.copyWith(messages: updated));
     try {
       socket.emitMessageDelete(event.messageId);
-      await repository.deleteMessage(event.messageId);
+      await repository.deleteMessage(
+        userId: userId,
+        otherUserId: otherUserId,
+        messageId: event.messageId,
+      );
     } catch (_) {
       // Optimistic delete
     }
@@ -167,5 +243,11 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ) {
     final updated = state.messages.where((m) => m.id != event.messageId).toList();
     emit(state.copyWith(messages: updated));
+
+    repository.deleteMessage(
+      userId: userId,
+      otherUserId: otherUserId,
+      messageId: event.messageId,
+    );
   }
 }
