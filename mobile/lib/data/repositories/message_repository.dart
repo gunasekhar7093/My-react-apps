@@ -119,4 +119,37 @@ class MessageRepository {
       deliveredAt: deliveredAt,
     );
   }
+
+  Future<List<MessageModel>> getPendingMessages({
+    required String userId,
+    required String otherUserId,
+  }) async {
+    return localStorage.getPendingMessages(
+      userId: userId,
+      otherUserId: otherUserId,
+    );
+  }
+
+  Future<void> savePendingMessage(MessageModel message) async {
+    await localStorage.savePendingMessage(message);
+  }
+
+  Future<void> replacePendingMessage({
+    required String userId,
+    required String otherUserId,
+    required String tempId,
+    required MessageModel confirmedMessage,
+  }) async {
+    await localStorage.replacePendingMessage(
+      userId,
+      otherUserId,
+      tempId,
+      confirmedMessage,
+    );
+  }
+
+  Future<void> removePendingMessage(String tempId) async {
+    await localStorage.removePendingMessage(tempId);
+  }
 }
+

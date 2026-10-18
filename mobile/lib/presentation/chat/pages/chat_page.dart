@@ -173,6 +173,13 @@ class _ChatPageState extends State<ChatPage> {
       if (!mounted) return;
       _bloc.add(ChatMessageDeletedReceived(messageId));
     });
+
+    _socket.addOnConnect(_onSocketConnect);
+  }
+
+  void _onSocketConnect() {
+    if (!mounted) return;
+    _bloc.add(const ChatFlushPendingRequested());
   }
 
   void _scrollToBottom() {
@@ -198,6 +205,7 @@ class _ChatPageState extends State<ChatPage> {
     _socket.removeOnMessagesRead();
     _socket.removeOnMessagesDelivered();
     _socket.removeOnMessageDeleted();
+    _socket.removeOnConnect(_onSocketConnect);
     _bloc.close();
     super.dispose();
   }
@@ -1538,6 +1546,13 @@ class _StatusTicks extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     switch (status) {
+      case MessageStatus.pending:
+        // Clock Icon (🕒): Queued locally, waiting for internet connection
+        return const Icon(
+          Icons.access_time_rounded,
+          size: 13,
+          color: Color(0xFFB0B7C3),
+        );
       case MessageStatus.sent:
         // One Gray Tick (✓): Sent to server, not yet reached recipient's device
         return const Icon(

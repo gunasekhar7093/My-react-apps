@@ -1,7 +1,8 @@
 enum MessageStatus {
-  sent,      // One Gray Tick (✓)
-  delivered, // Two Gray Ticks (✓✓)
-  read,      // Two White Ticks (✓✓)
+  pending,   // Clock Icon (🕒): Queued locally on device, waiting for internet
+  sent,      // One Gray Tick (✓): Sent to server, not yet reached recipient's device
+  delivered, // Two Gray Ticks (✓✓): Delivered to recipient's device
+  read,      // Two White Ticks (✓✓): Recipient has opened and read the message
 }
 
 class MessageModel {
@@ -17,6 +18,7 @@ class MessageModel {
   final String? mediaName;
   final int? mediaSize;
   final String? senderName;
+  final bool isPending;
 
   const MessageModel({
     required this.id,
@@ -31,6 +33,7 @@ class MessageModel {
     this.mediaName,
     this.mediaSize,
     this.senderName,
+    this.isPending = false,
   });
 
   bool get isMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
@@ -38,6 +41,9 @@ class MessageModel {
   bool get isVideo => mediaType == 'video';
 
   MessageStatus get status {
+    if (isPending) {
+      return MessageStatus.pending;
+    }
     if (readAt != null && readAt!.isNotEmpty) {
       return MessageStatus.read;
     }
@@ -60,6 +66,7 @@ class MessageModel {
       mediaType: json['mediaType']?.toString(),
       mediaName: json['mediaName']?.toString(),
       senderName: json['senderName']?.toString(),
+      isPending: json['isPending'] == true || json['status'] == 'pending',
       mediaSize: json['mediaSize'] is int
           ? json['mediaSize'] as int
           : int.tryParse(json['mediaSize']?.toString() ?? ''),
@@ -80,6 +87,7 @@ class MessageModel {
       'mediaName': ?mediaName,
       'mediaSize': ?mediaSize,
       'senderName': ?senderName,
+      'isPending': isPending,
     };
   }
 
@@ -96,6 +104,7 @@ class MessageModel {
     String? mediaName,
     int? mediaSize,
     String? senderName,
+    bool? isPending,
   }) {
     return MessageModel(
       id: id ?? this.id,
@@ -110,6 +119,7 @@ class MessageModel {
       mediaName: mediaName ?? this.mediaName,
       mediaSize: mediaSize ?? this.mediaSize,
       senderName: senderName ?? this.senderName,
+      isPending: isPending ?? this.isPending,
     );
   }
 }

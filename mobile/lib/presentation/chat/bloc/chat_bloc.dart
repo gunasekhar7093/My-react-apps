@@ -24,6 +24,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatStarted>(_onStarted);
     on<ChatMessageReceived>(_onMessageReceived);
     on<ChatMessageSendRequested>(_onSendRequested);
+    on<ChatFlushPendingRequested>(_onFlushPendingRequested);
     on<ChatMarkedRead>(_onMarkedRead);
     on<ChatMessagesReadReceived>(_onMessagesReadReceived);
     on<ChatMessagesDeliveredReceived>(_onMessagesDeliveredReceived);
@@ -53,19 +54,38 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       emit(state.copyWith(status: ChatStatus.loading, clearError: true));
     }
 
+    // If socket is already connected, flush any cached pending messages right away
+    if (socket.isConnected) {
+      add(const ChatFlushPendingRequested());
+    }
+
     // 2. Fetch latest messages from server in background
     try {
       final result = await repository.getMessages(
         userId: userId,
         otherUserId: otherUserId,
       );
+
+      // Preserve any pending offline messages that haven't reached the server yet
+      final pendingList = await repository.getPendingMessages(
+        userId: userId,
+        otherUserId: otherUserId,
+      );
+      final serverIds = result.messages.map((m) => m.id).toSet();
+      final stillPending = pendingList.where((p) => !serverIds.contains(p.id)).toList();
+      final combined = [...result.messages, ...stillPending];
+
       emit(state.copyWith(
         status: ChatStatus.ready,
-        messages: result.messages,
+        messages: combined,
         hasMoreOlder: result.hasMore,
         clearError: true,
       ));
       add(const ChatMarkedRead());
+
+      if (stillPending.isNotEmpty && socket.isConnected) {
+        add(const ChatFlushPendingRequested());
+      }
 
       // Acknowledge delivery for all incoming messages that haven't been delivered
       final undeliveredIds = result.messages
@@ -126,6 +146,28 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         (message.senderId == otherUserId && message.receiverId == userId))) {
       return;
     }
+
+    // If this is our own message echo from server, check if it matches a pending message
+    if (message.senderId == userId) {
+      final pendingIdx = state.messages.indexWhere(
+        (m) => m.isPending && (m.text == message.text || (m.mediaUrl != null && m.mediaUrl == message.mediaUrl)),
+      );
+      if (pendingIdx != -1) {
+        final tempId = state.messages[pendingIdx].id;
+        final updatedList = List<MessageModel>.from(state.messages);
+        updatedList[pendingIdx] = message;
+        emit(state.copyWith(messages: updatedList, status: ChatStatus.ready));
+
+        repository.replacePendingMessage(
+          userId: userId,
+          otherUserId: otherUserId,
+          tempId: tempId,
+          confirmedMessage: message,
+        );
+        return;
+      }
+    }
+
     if (state.messages.any((item) => item.id == message.id)) return;
     emit(state.copyWith(messages: [...state.messages, message], status: ChatStatus.ready));
 
@@ -150,21 +192,120 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ) async {
     final text = event.text.trim();
     if (text.isEmpty && (event.mediaUrl == null || event.mediaUrl!.isEmpty)) return;
-    if (state.sending) return;
-    emit(state.copyWith(sending: true, clearError: true));
-    try {
-      await socket.sendMessage(
-        receiverId: otherUserId,
-        text: text,
-        mediaUrl: event.mediaUrl,
-        mediaType: event.mediaType,
-        mediaName: event.mediaName,
-        mediaSize: event.mediaSize,
-      );
-    } catch (error) {
-      emit(state.copyWith(errorMessage: error.toString()));
-    } finally {
-      emit(state.copyWith(sending: false));
+
+    final tempId = 'temp_${DateTime.now().microsecondsSinceEpoch}';
+    final nowIso = DateTime.now().toIso8601String();
+    final pendingMessage = MessageModel(
+      id: tempId,
+      senderId: userId,
+      receiverId: otherUserId,
+      text: text,
+      createdAt: nowIso,
+      mediaUrl: event.mediaUrl,
+      mediaType: event.mediaType,
+      mediaName: event.mediaName,
+      mediaSize: event.mediaSize,
+      isPending: true,
+    );
+
+    // Optimistically add to conversation with Clock Icon (🕒 MessageStatus.pending)
+    emit(state.copyWith(
+      messages: [...state.messages, pendingMessage],
+      status: ChatStatus.ready,
+      clearError: true,
+    ));
+
+    // Save locally to both message cache and pending outbox queue
+    await repository.saveSingleMessage(
+      userId: userId,
+      otherUserId: otherUserId,
+      message: pendingMessage,
+    );
+    await repository.savePendingMessage(pendingMessage);
+
+    // If socket is connected, attempt sending immediately
+    if (socket.isConnected) {
+      try {
+        final res = await socket.sendMessage(
+          receiverId: otherUserId,
+          text: text,
+          mediaUrl: event.mediaUrl,
+          mediaType: event.mediaType,
+          mediaName: event.mediaName,
+          mediaSize: event.mediaSize,
+        );
+        final confirmedRaw = res['message'];
+        if (confirmedRaw is Map) {
+          final confirmedMessage = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
+          await repository.replacePendingMessage(
+            userId: userId,
+            otherUserId: otherUserId,
+            tempId: tempId,
+            confirmedMessage: confirmedMessage,
+          );
+          final updated = state.messages.map((m) => m.id == tempId ? confirmedMessage : m).toList();
+          emit(state.copyWith(messages: updated));
+        }
+      } catch (_) {
+        // If offline or network error, message safely remains in pending queue with Clock Icon.
+        // It will automatically be sent once internet connection is restored!
+      }
+    }
+  }
+
+  Future<void> _onFlushPendingRequested(
+    ChatFlushPendingRequested event,
+    Emitter<ChatState> emit,
+  ) async {
+    if (!socket.isConnected) return;
+
+    final pendingList = await repository.getPendingMessages(
+      userId: userId,
+      otherUserId: otherUserId,
+    );
+
+    final queueMap = <String, MessageModel>{};
+    for (final m in state.messages) {
+      if (m.isPending) {
+        queueMap[m.id] = m;
+      }
+    }
+    for (final m in pendingList) {
+      queueMap[m.id] = m;
+    }
+
+    if (queueMap.isEmpty) return;
+
+    final queue = queueMap.values.toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    for (final pending in queue) {
+      if (!socket.isConnected) break;
+      try {
+        final res = await socket.sendMessage(
+          receiverId: otherUserId,
+          text: pending.text,
+          mediaUrl: pending.mediaUrl,
+          mediaType: pending.mediaType,
+          mediaName: pending.mediaName,
+          mediaSize: pending.mediaSize,
+        );
+        final confirmedRaw = res['message'];
+        if (confirmedRaw is Map) {
+          final confirmed = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
+          await repository.replacePendingMessage(
+            userId: userId,
+            otherUserId: otherUserId,
+            tempId: pending.id,
+            confirmedMessage: confirmed,
+          );
+          final updated = state.messages.map((m) => m.id == pending.id ? confirmed : m).toList();
+          emit(state.copyWith(messages: updated));
+        }
+      } catch (_) {
+        // Disconnected or socket error; pause flush and resume on next connect
+        break;
+      }
     }
   }
 

@@ -5,8 +5,10 @@ import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/services/fcm_service.dart';
+import '../../../core/services/local_storage_service.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../data/models/message_model.dart';
 import '../../../data/models/user_model.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../auth/bloc/auth_bloc.dart';
@@ -145,8 +147,45 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
+  Future<void> _flushAllPendingMessages() async {
+    if (!_socket.isConnected) return;
+    final localStorage = LocalStorageService();
+    final allPending = await localStorage.getPendingMessages();
+    if (allPending.isEmpty) return;
+
+    for (final pending in allPending) {
+      if (!_socket.isConnected) break;
+      try {
+        final res = await _socket.sendMessage(
+          receiverId: pending.receiverId,
+          text: pending.text,
+          mediaUrl: pending.mediaUrl,
+          mediaType: pending.mediaType,
+          mediaName: pending.mediaName,
+          mediaSize: pending.mediaSize,
+        );
+        final confirmedRaw = res['message'];
+        if (confirmedRaw is Map) {
+          final confirmed = MessageModel.fromJson(Map<String, dynamic>.from(confirmedRaw));
+          await localStorage.replacePendingMessage(
+            pending.senderId,
+            pending.receiverId,
+            pending.id,
+            confirmed,
+          );
+        }
+      } catch (_) {
+        break;
+      }
+    }
+  }
+
   Future<void> _connectSocket() async {
+    _socket.addOnConnect(_flushAllPendingMessages);
     await _socket.connect(
+      onConnected: () {
+        _flushAllPendingMessages();
+      },
       onUserStatus: ({required String userId, required String status, String? lastSeenAt}) {
         if (mounted) {
           _bloc.add(DashboardUserStatusChanged(userId: userId, status: status, lastSeenAt: lastSeenAt));

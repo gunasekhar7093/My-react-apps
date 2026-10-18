@@ -43,6 +43,7 @@ class SocketService {
   final List<MessagesReadCallback> _extraMessagesReadCallbacks = [];
   final List<MessagesDeliveredCallback> _extraMessagesDeliveredCallbacks = [];
   final List<MessageDeletedCallback> _extraMessageDeletedCallbacks = [];
+  final List<SocketConnectionCallback> _extraConnectCallbacks = [];
 
   SocketService({SecureStorageService? storage})
       : storage = storage ?? SecureStorageService();
@@ -89,6 +90,9 @@ class SocketService {
     socket
       ..onConnect((_) {
         onConnected?.call();
+        for (final cb in List.of(_extraConnectCallbacks)) {
+          cb();
+        }
       })
       ..onConnectError((data) {
         onError?.call(data?.toString() ?? 'Socket connection failed.');
@@ -246,6 +250,20 @@ class SocketService {
     _socket?.emit('message:delete', {'messageId': messageId});
   }
 
+  /// Add a connection listener. Called whenever socket connects or reconnects.
+  void addOnConnect(SocketConnectionCallback callback) {
+    _extraConnectCallbacks.add(callback);
+  }
+
+  /// Remove a previously added connection listener.
+  void removeOnConnect([SocketConnectionCallback? callback]) {
+    if (callback != null) {
+      _extraConnectCallbacks.remove(callback);
+    } else {
+      _extraConnectCallbacks.clear();
+    }
+  }
+
   // ── Message sending ───────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> sendMessage({
@@ -300,6 +318,10 @@ class SocketService {
   void disconnect() {
     _extraMessageCallbacks.clear();
     _extraStatusCallbacks.clear();
+    _extraMessagesReadCallbacks.clear();
+    _extraMessagesDeliveredCallbacks.clear();
+    _extraMessageDeletedCallbacks.clear();
+    _extraConnectCallbacks.clear();
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;

@@ -197,4 +197,90 @@ class LocalStorageService {
       }
     } catch (_) {}
   }
+
+  // ── Offline Pending Outbox Queue ──────────────────────────────────────────
+
+  Future<File> _getPendingQueueFile() async {
+    final dir = await _getCacheDirectory();
+    return File('${dir.path}/pending_outbox_queue.json');
+  }
+
+  Future<List<MessageModel>> getPendingMessages({String? userId, String? otherUserId}) async {
+    try {
+      final file = await _getPendingQueueFile();
+      if (!await file.exists()) return const [];
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return const [];
+      final dynamic decoded = jsonDecode(content);
+      if (decoded is! List) return const [];
+      final list = decoded
+          .whereType<Map>()
+          .map((item) => MessageModel.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+
+      if (userId != null && otherUserId != null) {
+        return list
+            .where((m) =>
+                (m.senderId == userId && m.receiverId == otherUserId) ||
+                (m.senderId == otherUserId && m.receiverId == userId))
+            .toList();
+      }
+      return list;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> savePendingMessage(MessageModel message) async {
+    try {
+      final existing = await getPendingMessages();
+      final map = <String, MessageModel>{for (final m in existing) m.id: m};
+      map[message.id] = message;
+      final file = await _getPendingQueueFile();
+      final jsonList = map.values.map((m) => m.toJson()).toList();
+      await file.writeAsString(jsonEncode(jsonList), flush: true);
+    } catch (_) {}
+  }
+
+  Future<void> removePendingMessage(String tempId) async {
+    try {
+      final existing = await getPendingMessages();
+      final filtered = existing.where((m) => m.id != tempId).toList();
+      final file = await _getPendingQueueFile();
+      final jsonList = filtered.map((m) => m.toJson()).toList();
+      await file.writeAsString(jsonEncode(jsonList), flush: true);
+    } catch (_) {}
+  }
+
+  Future<void> replacePendingMessage(
+    String userId,
+    String otherUserId,
+    String tempId,
+    MessageModel confirmedMessage,
+  ) async {
+    try {
+      // 1. Remove from pending queue
+      await removePendingMessage(tempId);
+
+      // 2. Replace in conversation messages cache
+      final existing = await getMessages(userId, otherUserId);
+      final replaced = existing.map((m) {
+        if (m.id == tempId) {
+          return confirmedMessage;
+        }
+        return m;
+      }).toList();
+
+      // Ensure confirmedMessage exists in the list if tempId was not found
+      if (!replaced.any((m) => m.id == confirmedMessage.id)) {
+        replaced.add(confirmedMessage);
+      }
+      replaced.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      final file = await _getMessagesFile(userId, otherUserId);
+      final jsonList = replaced.map((m) => m.toJson()).toList();
+      await file.writeAsString(jsonEncode(jsonList), flush: true);
+    } catch (_) {}
+  }
 }
+

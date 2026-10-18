@@ -61,3 +61,8 @@ class ChatMessageDeletedReceived extends ChatEvent {
 class ChatLoadOlderMessagesRequested extends ChatEvent {
   const ChatLoadOlderMessagesRequested();
 }
+
+class ChatFlushPendingRequested extends ChatEvent {
+  const ChatFlushPendingRequested();
+}
+
