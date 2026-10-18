@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../constants/api_constants.dart';
+import '../services/local_storage_service.dart';
+import '../services/notification_service.dart';
 import '../storage/secure_storage_service.dart';
 
 typedef UserStatusCallback = void Function({
@@ -154,6 +156,22 @@ class SocketService {
         if (data is! Map) return;
         final messageId = data['messageId']?.toString();
         if (messageId == null || messageId.isEmpty) return;
+        final senderId = data['senderId']?.toString();
+        final receiverId = data['receiverId']?.toString();
+
+        // 1. Immediately delete from local offline cache on disk
+        LocalStorageService().deleteMessageEverywhere(
+          messageId,
+          userId: senderId,
+          otherUserId: receiverId,
+        );
+
+        // 2. Dismiss any active notification
+        if (senderId != null && senderId.isNotEmpty) {
+          NotificationService().cancelSenderNotification(senderId);
+        }
+
+        // 3. Dispatch to active UI listeners (e.g. ChatBloc)
         for (final cb in List.of(_extraMessageDeletedCallbacks)) {
           cb(messageId);
         }

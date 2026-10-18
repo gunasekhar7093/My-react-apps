@@ -10,6 +10,7 @@ import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/message_model.dart';
 import '../../../data/models/user_model.dart';
+import '../../../data/repositories/message_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_event.dart';
@@ -197,8 +198,29 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
+  Future<void> _preSyncRecentConversations() async {
+    try {
+      final currentUserId = context.read<AuthBloc>().state.user?.id;
+      if (currentUserId == null || currentUserId.isEmpty) return;
+      final users = _bloc.state.users;
+      final activeUsers = users
+          .where((u) => u.latestMessageAt != null && u.latestMessageAt!.isNotEmpty)
+          .toList()
+        ..sort((a, b) => (b.latestMessageAt ?? '').compareTo(a.latestMessageAt ?? ''));
+      final topUsers = activeUsers.take(4).toList();
+      for (final otherUser in topUsers) {
+        MessageRepository()
+            .getMessages(userId: currentUserId, otherUserId: otherUser.id)
+            .catchError((_) => const MessagesResult(messages: []));
+      }
+    } catch (_) {}
+  }
+
   Future<void> _connectSocket() async {
-    _socket.addOnConnect(_flushAllPendingMessages);
+    _socket.addOnConnect(() {
+      _flushAllPendingMessages();
+      _preSyncRecentConversations();
+    });
     await _socket.connect(
       onUserStatus: ({required String userId, required String status, String? lastSeenAt}) {
         if (mounted) {
@@ -317,7 +339,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
     return BlocProvider.value(
       value: _bloc,
-      child: Scaffold(
+      child: BlocListener<DashboardBloc, DashboardState>(
+        listenWhen: (previous, current) =>
+            previous.users.isEmpty && current.users.isNotEmpty,
+        listener: (context, state) {
+          _preSyncRecentConversations();
+        },
+        child: Scaffold(
         appBar: AppBar(
           title: Row(
             children: [
@@ -602,6 +630,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             );
           },
         ),
+      ),
       ),
     );
   }

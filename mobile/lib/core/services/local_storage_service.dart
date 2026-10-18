@@ -97,6 +97,117 @@ class LocalStorageService {
     }
   }
 
+  /// Synchronizes server-fetched messages with the local offline cache.
+  /// Handles additions, updates/status changes, AND server-side deletions/unsends.
+  Future<void> syncMessages({
+    required String userId,
+    required String otherUserId,
+    required List<MessageModel> fetchedMessages,
+    required bool hasMore,
+    String? before,
+  }) async {
+    try {
+      final existing = await getMessages(userId, otherUserId);
+
+      // Separate existing messages into local unconfirmed pending (outbox) and confirmed messages
+      final pendingMessages = <MessageModel>[];
+      final confirmedExisting = <MessageModel>[];
+
+      final fetchedIds = fetchedMessages.map((m) => m.id).toSet();
+      final fetchedClientTempIds = fetchedMessages
+          .where((m) => m.clientTempId != null && m.clientTempId!.isNotEmpty)
+          .map((m) => m.clientTempId!)
+          .toSet();
+
+      for (final m in existing) {
+        if (m.isPending || m.id.startsWith('temp_')) {
+          // If this pending message has now been confirmed by server, don't keep as pending
+          final isConfirmed = fetchedIds.contains(m.id) ||
+              (m.clientTempId != null && fetchedClientTempIds.contains(m.clientTempId));
+          if (!isConfirmed) {
+            pendingMessages.add(m);
+          }
+        } else {
+          confirmedExisting.add(m);
+        }
+      }
+
+      final Map<String, MessageModel> resultMap = {};
+      final sortedFetched = List<MessageModel>.from(fetchedMessages)
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      if (before == null) {
+        // Initial fetch / latest messages window
+        if (!hasMore || sortedFetched.isEmpty) {
+          // The server returned the full conversation or conversation is empty.
+          // ALL confirmed messages that are not in fetchedMessages have been deleted!
+          for (final m in sortedFetched) {
+            resultMap[m.id] = m;
+          }
+        } else {
+          // hasMore == true: fetchedMessages contains the newest messages down to oldestFetchedTime
+          final oldestFetchedTime = sortedFetched.first.createdAt;
+          // Keep confirmed older messages that are before the fetched window
+          for (final m in confirmedExisting) {
+            if (m.createdAt.compareTo(oldestFetchedTime) < 0) {
+              resultMap[m.id] = m;
+            }
+          }
+          // In the window [oldestFetchedTime, now], only fetchedMessages exist on server!
+          for (final m in sortedFetched) {
+            resultMap[m.id] = m;
+          }
+        }
+      } else {
+        // Pagination window: messages before `before`
+        if (sortedFetched.isEmpty) {
+          if (!hasMore) {
+            // No older messages exist. Any message older than `before` was deleted.
+            for (final m in confirmedExisting) {
+              if (m.createdAt.compareTo(before) >= 0) {
+                resultMap[m.id] = m;
+              }
+            }
+          } else {
+            for (final m in confirmedExisting) {
+              resultMap[m.id] = m;
+            }
+          }
+        } else {
+          final oldestFetchedTime = sortedFetched.first.createdAt;
+          for (final m in confirmedExisting) {
+            if (m.createdAt.compareTo(before) >= 0) {
+              // Newer messages outside this page: keep
+              resultMap[m.id] = m;
+            } else if (m.createdAt.compareTo(oldestFetchedTime) < 0) {
+              // Older messages before this page: keep only if server has more older
+              if (hasMore) {
+                resultMap[m.id] = m;
+              }
+            }
+            // Confirmed messages in [oldestFetchedTime, before] that aren't in fetchedMessages
+            // are NOT kept, because they were deleted on server!
+          }
+          for (final m in sortedFetched) {
+            resultMap[m.id] = m;
+          }
+        }
+      }
+
+      // Re-add any local unconfirmed pending messages
+      for (final m in pendingMessages) {
+        resultMap[m.id] = m;
+      }
+
+      final finalMessages = resultMap.values.toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      final file = await _getMessagesFile(userId, otherUserId);
+      final jsonList = finalMessages.map((m) => m.toJson()).toList();
+      await file.writeAsString(jsonEncode(jsonList), flush: true);
+    } catch (_) {}
+  }
+
   Future<void> saveMessages(String userId, String otherUserId, List<MessageModel> newMessages) async {
     try {
       final existing = await getMessages(userId, otherUserId);
@@ -122,11 +233,52 @@ class LocalStorageService {
 
   Future<void> deleteMessage(String userId, String otherUserId, String messageId) async {
     try {
+      await removePendingMessage(messageId);
       final existing = await getMessages(userId, otherUserId);
-      final filtered = existing.where((m) => m.id != messageId).toList();
+      final filtered = existing
+          .where((m) => m.id != messageId && m.clientTempId != messageId)
+          .toList();
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = filtered.map((m) => m.toJson()).toList();
       await file.writeAsString(jsonEncode(jsonList), flush: true);
+    } catch (_) {}
+  }
+
+  /// Deletes a message from all local caches (specific conversation or scans all conversations)
+  Future<void> deleteMessageEverywhere(String messageId, {String? userId, String? otherUserId}) async {
+    try {
+      await removePendingMessage(messageId);
+
+      if (userId != null && otherUserId != null && userId.isNotEmpty && otherUserId.isNotEmpty) {
+        await deleteMessage(userId, otherUserId, messageId);
+      }
+
+      // Also ensure it is removed across all conversation cache files if present
+      final dir = await _getCacheDirectory();
+      if (!await dir.exists()) return;
+      final files = dir.listSync().whereType<File>();
+      for (final file in files) {
+        final filename = file.uri.pathSegments.last;
+        if (filename.startsWith('messages_') && filename.endsWith('.json')) {
+          try {
+            final content = await file.readAsString();
+            if (content.contains(messageId)) {
+              final dynamic decoded = jsonDecode(content);
+              if (decoded is List) {
+                final filtered = decoded.where((item) {
+                  if (item is Map) {
+                    final id = item['id']?.toString();
+                    final clientTempId = item['clientTempId']?.toString();
+                    return id != messageId && clientTempId != messageId;
+                  }
+                  return true;
+                }).toList();
+                await file.writeAsString(jsonEncode(filtered), flush: true);
+              }
+            }
+          } catch (_) {}
+        }
+      }
     } catch (_) {}
   }
 
@@ -256,7 +408,9 @@ class LocalStorageService {
   Future<void> removePendingMessage(String tempId) async {
     try {
       final existing = await getPendingMessages();
-      final filtered = existing.where((m) => m.id != tempId).toList()
+      final filtered = existing
+          .where((m) => m.id != tempId && m.clientTempId != tempId)
+          .toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       final file = await _getPendingQueueFile();
       final jsonList = filtered.map((m) => m.toJson()).toList();
@@ -277,7 +431,7 @@ class LocalStorageService {
       // 2. Replace in conversation messages cache
       final existing = await getMessages(userId, otherUserId);
       final replaced = existing.map((m) {
-        if (m.id == tempId) {
+        if (m.id == tempId || (m.clientTempId != null && m.clientTempId == tempId)) {
           return confirmedMessage;
         }
         return m;

@@ -740,8 +740,13 @@ app.delete('/api/messages/:messageId', requireAuth, async (req, res) => {
 
     await messagesCollection.deleteOne({ id: messageId })
 
-    io.to(message.senderId).emit('message:delete', { messageId })
-    io.to(message.receiverId).emit('message:delete', { messageId })
+    const deletePayload = {
+      messageId,
+      senderId: message.senderId,
+      receiverId: message.receiverId,
+    }
+    io.to(message.senderId).emit('message:delete', deletePayload)
+    io.to(message.receiverId).emit('message:delete', deletePayload)
 
     res.json({ ok: true, messageId })
   } catch (error) {
@@ -1287,8 +1292,13 @@ io.on('connection', async (socket) => {
 
       await messagesCollection.deleteOne({ id: messageId })
 
-      io.to(message.senderId).emit('message:delete', { messageId })
-      io.to(message.receiverId).emit('message:delete', { messageId })
+      const deletePayload = {
+        messageId,
+        senderId: message.senderId,
+        receiverId: message.receiverId,
+      }
+      io.to(message.senderId).emit('message:delete', deletePayload)
+      io.to(message.receiverId).emit('message:delete', deletePayload)
     } catch (err) {
       console.error('Socket message:delete error:', err.message)
     }

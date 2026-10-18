@@ -54,9 +54,15 @@ class MessageRepository {
           .map((m) => MessageModel.fromJson(Map<String, dynamic>.from(m)))
           .toList();
 
-      if (fetched.isNotEmpty) {
-        await localStorage.saveMessages(userId, otherUserId, fetched);
-      }
+      // Synchronize cache with server data:
+      // Adds new messages, updates changed messages, and prunes deleted messages!
+      await localStorage.syncMessages(
+        userId: userId,
+        otherUserId: otherUserId,
+        fetchedMessages: fetched,
+        hasMore: hasMore,
+        before: before,
+      );
 
       return MessagesResult(messages: fetched, hasMore: hasMore);
     } catch (e) {
@@ -90,6 +96,14 @@ class MessageRepository {
         authenticated: true,
       );
     } catch (_) {}
+  }
+
+  Future<void> deleteLocalMessage({
+    required String userId,
+    required String otherUserId,
+    required String messageId,
+  }) async {
+    await localStorage.deleteMessage(userId, otherUserId, messageId);
   }
 
   Future<void> deleteMessage({

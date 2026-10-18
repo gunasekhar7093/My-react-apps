@@ -72,7 +72,15 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         otherUserId: otherUserId,
       );
       final serverIds = result.messages.map((m) => m.id).toSet();
-      final stillPending = pendingList.where((p) => !serverIds.contains(p.id)).toList();
+      final serverClientTempIds = result.messages
+          .where((m) => m.clientTempId != null && m.clientTempId!.isNotEmpty)
+          .map((m) => m.clientTempId!)
+          .toSet();
+      final stillPending = pendingList
+          .where((p) =>
+              !serverIds.contains(p.id) &&
+              !(p.clientTempId != null && serverClientTempIds.contains(p.clientTempId)))
+          .toList();
       final combined = [...result.messages, ...stillPending]
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
@@ -444,7 +452,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     ChatMessageDeleteRequested event,
     Emitter<ChatState> emit,
   ) async {
-    final updated = state.messages.where((m) => m.id != event.messageId).toList();
+    final updated = state.messages
+        .where((m) => m.id != event.messageId && m.clientTempId != event.messageId)
+        .toList();
     emit(state.copyWith(messages: updated));
     try {
       socket.emitMessageDelete(event.messageId);
@@ -462,10 +472,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     ChatMessageDeletedReceived event,
     Emitter<ChatState> emit,
   ) {
-    final updated = state.messages.where((m) => m.id != event.messageId).toList();
+    final updated = state.messages
+        .where((m) => m.id != event.messageId && m.clientTempId != event.messageId)
+        .toList();
     emit(state.copyWith(messages: updated));
 
-    repository.deleteMessage(
+    repository.deleteLocalMessage(
       userId: userId,
       otherUserId: otherUserId,
       messageId: event.messageId,
