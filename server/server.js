@@ -734,8 +734,8 @@ app.delete('/api/messages/:messageId', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Message not found' })
     }
 
-    if (message.senderId !== req.userId && message.receiverId !== req.userId) {
-      return res.status(403).json({ error: 'You are not authorized to delete this message' })
+    if (message.senderId !== req.userId) {
+      return res.status(403).json({ error: 'You are not authorized to unsend this message' })
     }
 
     await messagesCollection.deleteOne({ id: messageId })
@@ -1260,7 +1260,8 @@ io.on('connection', async (socket) => {
       const message = await messagesCollection.findOne({ id: messageId })
       if (!message) return
 
-      if (message.senderId !== userId && message.receiverId !== userId) return
+      // Only sender can unsend
+      if (message.senderId !== userId) return
 
       await messagesCollection.deleteOne({ id: messageId })
 

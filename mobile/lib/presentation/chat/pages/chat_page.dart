@@ -201,6 +201,9 @@ class _ChatPageState extends State<ChatPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final canCopy = message.text.isNotEmpty || (message.mediaUrl != null && message.mediaUrl!.isNotEmpty);
+    final isMine = message.senderId == widget.currentUserId;
+
+    if (!canCopy && !isMine) return;
 
     showModalBottomSheet<void>(
       context: context,
@@ -257,28 +260,29 @@ class _ChatPageState extends State<ChatPage> {
                     }
                   },
                 ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.redAccent.withValues(alpha: 0.12),
-                    shape: BoxShape.circle,
+              if (isMine)
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.undo_rounded, color: Colors.redAccent, size: 20),
                   ),
-                  child: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
-                ),
-                title: const Text(
-                  'Delete',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.redAccent,
+                  title: const Text(
+                    'Unsend',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.redAccent,
+                    ),
                   ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    _showUnsendConfirmationDialog(message);
+                  },
                 ),
-                onTap: () {
-                  Navigator.of(sheetCtx).pop();
-                  _showDeleteConfirmationDialog(message);
-                },
-              ),
             ],
           ),
         ),
@@ -286,7 +290,7 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  void _showDeleteConfirmationDialog(MessageModel message) {
+  void _showUnsendConfirmationDialog(MessageModel message) {
     final theme = Theme.of(context);
     showDialog<void>(
       context: context,
@@ -298,7 +302,7 @@ class _ChatPageState extends State<ChatPage> {
           borderRadius: BorderRadius.circular(16),
         ),
         title: Text(
-          'delete this message?',
+          'unsend this message?',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -322,13 +326,13 @@ class _ChatPageState extends State<ChatPage> {
               _bloc.add(ChatMessageDeleteRequested(message.id));
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Message deleted'),
+                  content: Text('Message unsent'),
                   duration: Duration(seconds: 2),
                 ),
               );
             },
             child: const Text(
-              'delete',
+              'unsend',
               style: TextStyle(
                 color: Colors.redAccent,
                 fontWeight: FontWeight.w600,
