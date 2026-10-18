@@ -782,13 +782,21 @@ class _ChatPageState extends State<ChatPage> {
         body: BlocConsumer<ChatBloc, ChatState>(
           listener: (context, state) {
             if (state.errorMessage != null && state.errorMessage!.isNotEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(state.errorMessage!),
-                  backgroundColor: theme.colorScheme.error,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              final msg = state.errorMessage!;
+              final isTechnicalNetworkError = msg.contains('SocketException') ||
+                  msg.contains('Failed host lookup') ||
+                  msg.contains('ClientException') ||
+                  msg.contains('HandshakeException') ||
+                  msg.contains('OS Error');
+              if (!isTechnicalNetworkError) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(msg),
+                    backgroundColor: theme.colorScheme.error,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
             }
           },
           builder: (context, state) {
@@ -798,31 +806,6 @@ class _ChatPageState extends State<ChatPage> {
                   width: 32,
                   height: 32,
                   child: CircularProgressIndicator(strokeWidth: 2.5),
-                ),
-              );
-            }
-
-            if (state.status == ChatStatus.failure && state.messages.isEmpty) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.wifi_off_rounded, size: 40, color: theme.colorScheme.error),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Unable to load messages',
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: () => _bloc.add(const ChatStarted()),
-                        icon: const Icon(Icons.refresh_rounded),
-                        label: const Text('Try Again'),
-                      ),
-                    ],
-                  ),
                 ),
               );
             }

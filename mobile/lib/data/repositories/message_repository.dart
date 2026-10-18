@@ -68,9 +68,7 @@ class MessageRepository {
     } catch (e) {
       if (before == null) {
         final cached = await localStorage.getMessages(userId, otherUserId);
-        if (cached.isNotEmpty) {
-          return MessagesResult(messages: cached, hasMore: false);
-        }
+        return MessagesResult(messages: cached, hasMore: false);
       }
       rethrow;
     }

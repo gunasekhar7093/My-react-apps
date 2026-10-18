@@ -39,20 +39,24 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
     NotificationService().cancelSenderNotification(otherUserId);
 
-    // 1. Immediately load and emit cached messages so offline users can view chat history instantly
+    // 1. Immediately load and emit cached messages + pending outbox messages
     final cached = await repository.getCachedMessages(
       userId: userId,
       otherUserId: otherUserId,
     );
-    if (cached.isNotEmpty) {
-      emit(state.copyWith(
-        status: ChatStatus.ready,
-        messages: cached,
-        clearError: true,
-      ));
-    } else {
-      emit(state.copyWith(status: ChatStatus.loading, clearError: true));
-    }
+    final pendingList = await repository.getPendingMessages(
+      userId: userId,
+      otherUserId: otherUserId,
+    );
+    final initialMessages = [...cached, ...pendingList]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    // Chat is always ready to display and accept new messages immediately
+    emit(state.copyWith(
+      status: ChatStatus.ready,
+      messages: initialMessages,
+      clearError: true,
+    ));
 
     // If socket is already connected, flush any cached pending messages right away
     if (socket.isConnected) {
@@ -67,7 +71,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       );
 
       // Preserve any pending offline messages that haven't reached the server yet
-      final pendingList = await repository.getPendingMessages(
+      final currentPending = await repository.getPendingMessages(
         userId: userId,
         otherUserId: otherUserId,
       );
@@ -76,7 +80,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           .where((m) => m.clientTempId != null && m.clientTempId!.isNotEmpty)
           .map((m) => m.clientTempId!)
           .toSet();
-      final stillPending = pendingList
+      final stillPending = currentPending
           .where((p) =>
               !serverIds.contains(p.id) &&
               !(p.clientTempId != null && serverClientTempIds.contains(p.clientTempId)))
@@ -104,11 +108,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       if (undeliveredIds.isNotEmpty) {
         socket.emitMessagesDelivered(undeliveredIds);
       }
-    } catch (error) {
-      // If we already have cached messages in state, stay in ready state so user can view history!
+    } catch (_) {
+      // Offline or network error: Chat is already in ChatStatus.ready with local messages.
+      // Do not block user with an error view or pop up raw technical exceptions.
       emit(state.copyWith(
-        status: state.messages.isNotEmpty ? ChatStatus.ready : ChatStatus.failure,
-        errorMessage: state.messages.isNotEmpty ? null : error.toString(),
+        status: ChatStatus.ready,
+        clearError: true,
       ));
     }
   }
