@@ -1324,33 +1324,63 @@ class _Bubble extends StatelessWidget {
     final timeWidth = timePainter.width + (mine ? 18 : 6);
 
     final lineMetrics = textPainter.computeLineMetrics();
+    final longestLineWidth = textPainter.width;
     final lastLineWidth = lineMetrics.isNotEmpty ? lineMetrics.last.width : textPainter.width;
+    final lineCount = lineMetrics.length;
     final fitsOnLastLine = (lastLineWidth + 8 + timeWidth) <= contentMaxWidth;
 
-    if (fitsOnLastLine) {
-      // WhatsApp style: When the last line has room for the timestamp,
-      // render the timestamp directly inline on the last line.
-      // This applies to both single-line messages ("Hello 12:02 pm")
-      // and multi-line messages/lists ("Apple \n Mango \n Orenge 12:02 pm").
-      return Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(text: message.text, style: textStyle),
-            WidgetSpan(
-              alignment: PlaceholderAlignment.middle,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 7, bottom: 1),
+    if (lineCount <= 1) {
+      if (fitsOnLastLine) {
+        // Single-line message: inline timestamp hugs the text snugly
+        return Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: message.text, style: textStyle),
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 7, bottom: 1),
+                  child: timeWidget,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      if (fitsOnLastLine) {
+        // Multi-line message where last line has room:
+        // Position timestamp at the bottom-right of the bubble on the last line,
+        // so it doesn't float awkwardly in the middle next to a short word.
+        final targetWidth = (longestLineWidth > (lastLineWidth + 8 + timeWidth)
+                ? longestLineWidth
+                : (lastLineWidth + 8 + timeWidth))
+            .clamp(0.0, contentMaxWidth);
+
+        return SizedBox(
+          width: targetWidth,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Text(
+                message.text,
+                style: textStyle,
+                textAlign: TextAlign.start,
+              ),
+              Positioned(
+                right: 0,
+                bottom: 0,
                 child: timeWidget,
               ),
-            ),
-          ],
-        ),
-      );
+            ],
+          ),
+        );
+      }
     }
 
-    // When the last line is full (reaches contentMaxWidth), the timestamp
-    // drops to a dedicated line below, aligned to the bottom-right.
-    final bubbleWidth = (textPainter.width > timeWidth ? textPainter.width : timeWidth).clamp(0.0, contentMaxWidth);
+    // When the last line is full (no room for timestamp on the last line),
+    // drop the timestamp to a dedicated line below, aligned to the bottom-right.
+    final bubbleWidth = (longestLineWidth > timeWidth ? longestLineWidth : timeWidth).clamp(0.0, contentMaxWidth);
     return SizedBox(
       width: bubbleWidth,
       child: Column(
