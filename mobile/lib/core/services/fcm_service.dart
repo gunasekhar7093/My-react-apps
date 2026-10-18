@@ -28,6 +28,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       final senderId = message.data['senderId']?.toString() ?? '';
       final senderName = message.data['senderName']?.toString() ?? 'User';
       final text = message.data['text']?.toString() ?? message.data['preview']?.toString() ?? '';
+      final messageId = message.data['messageId']?.toString() ?? message.messageId;
 
       List<String>? historicalLines;
       final rawLines = message.data['unreadLines']?.toString();
@@ -45,6 +46,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           senderId: senderId,
           senderName: senderName,
           messageText: text,
+          messageId: messageId,
           historicalLines: historicalLines,
         );
       }
@@ -96,6 +98,7 @@ class FcmService {
         final senderId = message.data['senderId']?.toString() ?? '';
         final senderName = notification?.title ?? message.data['senderName']?.toString() ?? 'User';
         final body = notification?.body ?? message.data['text']?.toString() ?? '';
+        final messageId = message.data['messageId']?.toString() ?? message.messageId;
 
         List<String>? historicalLines;
         final rawLines = message.data['unreadLines']?.toString();
@@ -113,6 +116,7 @@ class FcmService {
             senderId: senderId,
             senderName: senderName,
             messageText: body,
+            messageId: messageId,
             historicalLines: historicalLines,
           );
         }

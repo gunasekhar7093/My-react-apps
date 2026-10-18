@@ -89,13 +89,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
     final text = message['text']?.toString() ?? '';
     final mediaType = message['mediaType']?.toString();
+    final messageId = message['id']?.toString();
+
+    List<String>? historicalLines;
+    final rawLines = message['unreadLines'];
+    if (rawLines is List) {
+      historicalLines = rawLines.map((e) => e.toString()).toList();
+    }
 
     // WhatsApp-like heads-up system notification
     NotificationService().showMessageNotification(
       senderId: senderId,
       senderName: senderName,
       messageText: text,
+      messageId: messageId,
       mediaType: mediaType,
+      historicalLines: historicalLines,
     );
   }
 

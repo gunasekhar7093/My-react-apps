@@ -106,12 +106,10 @@ class NotificationService {
   final Map<String, List<String>> _senderMessages = {};
   final Map<String, String> _senderNames = {};
 
-  /// Deduplication: track the last notification shown per sender (text + timestamp).
-  /// Prevents the same message appearing twice when both the socket path and the
-  /// FCM foreground handler both call showMessageNotification.
-  final Map<String, String> _lastShownText = {};
-  final Map<String, DateTime> _lastShownTime = {};
-  static const _dedupWindowMs = 3000;
+  /// Deduplication: track recent unique message IDs shown so that if both the socket
+  /// and the FCM push arrive for the exact same message, it is only displayed once.
+  /// Genuine identical messages (e.g. 5 consecutive "hi"s) have different IDs and are kept!
+  final Set<String> _recentMessageIds = {};
 
   /// Set this to the currently open chat user's ID so that incoming notifications
   /// from that user are suppressed while the conversation is visible on screen.
@@ -142,6 +140,7 @@ class NotificationService {
     required String senderId,
     required String senderName,
     required String messageText,
+    String? messageId,
     String? mediaType,
     List<String>? historicalLines,
   }) async {
@@ -154,25 +153,21 @@ class NotificationService {
       // heads-up banner — it would be intrusive and redundant.
       if (openChatUserId != null && openChatUserId == senderId) return;
 
+      // Deduplication by messageId: if this exact message was already processed
+      // (e.g. socket arrived first, or FCM arrived first), do not display it again.
+      if (messageId != null && messageId.isNotEmpty) {
+        if (_recentMessageIds.contains(messageId)) {
+          return;
+        }
+        _recentMessageIds.add(messageId);
+        if (_recentMessageIds.length > 200) {
+          _recentMessageIds.remove(_recentMessageIds.first);
+        }
+      }
+
       _senderNames[senderId] = senderName;
 
       final preview = _formatPreview(messageText, mediaType);
-
-      // Deduplication: skip if the exact same preview was already notified
-      // within the dedup window (handles socket + FCM double-fire for the same
-      // message when the app is in the foreground).
-      if (historicalLines == null || historicalLines.isEmpty) {
-        final lastText = _lastShownText[senderId];
-        final lastTime = _lastShownTime[senderId];
-        final now = DateTime.now();
-        if (lastText == preview &&
-            lastTime != null &&
-            now.difference(lastTime).inMilliseconds < _dedupWindowMs) {
-          return;
-        }
-        _lastShownText[senderId] = preview;
-        _lastShownTime[senderId] = now;
-      }
 
       final messages = _senderMessages.putIfAbsent(senderId, () => []);
 
@@ -229,8 +224,13 @@ class NotificationService {
         iOS: darwinDetails,
       );
 
-      // Unique notification id based on senderId hash so different senders don't overwrite each other
-      final notifId = (senderId.hashCode & 0x7FFFFFFF);
+      // On Android, use id = 0 with tag = senderId so that this local notification
+      // and FCM background notifications (which FCM always posts with tag = senderId, id = 0)
+      // share the exact same Android notification slot.
+      // This guarantees that incoming FCM messages replace the socket notification
+      // (and vice-versa) instead of creating duplicate notifications in the shade.
+      // Different senders are differentiated by tag = senderId.
+      final notifId = (!kIsWeb && Platform.isAndroid) ? 0 : (senderId.hashCode & 0x7FFFFFFF);
 
       await _notificationsPlugin.show(
         id: notifId,
@@ -250,17 +250,27 @@ class NotificationService {
     if (senderId.isEmpty) return;
     _senderMessages.remove(senderId);
     _senderNames.remove(senderId);
-    _lastShownText.remove(senderId);
-    _lastShownTime.remove(senderId);
-    final notifId = (senderId.hashCode & 0x7FFFFFFF);
+    final hashId = (senderId.hashCode & 0x7FFFFFFF);
     try {
-      await _notificationsPlugin.cancel(id: notifId, tag: senderId);
+      // Cancel id 0 with tag = senderId (matches FCM and local Android notifications)
+      await _notificationsPlugin.cancel(id: 0, tag: senderId);
+    } catch (_) {}
+    try {
+      // Also cancel legacy hashId if previously posted
+      await _notificationsPlugin.cancel(id: hashId, tag: senderId);
+    } catch (_) {}
+    try {
+      await _notificationsPlugin.cancel(id: hashId);
     } catch (_) {}
     try {
       if (!kIsWeb && Platform.isAndroid) {
         await _nativeChannel.invokeMethod('cancelNotification', {
           'tag': senderId,
-          'id': notifId,
+          'id': 0,
+        });
+        await _nativeChannel.invokeMethod('cancelNotification', {
+          'tag': senderId,
+          'id': hashId,
         });
       }
     } catch (_) {}
@@ -270,8 +280,7 @@ class NotificationService {
   Future<void> cancelAllNotifications() async {
     _senderMessages.clear();
     _senderNames.clear();
-    _lastShownText.clear();
-    _lastShownTime.clear();
+    _recentMessageIds.clear();
     try {
       await _notificationsPlugin.cancelAll();
     } catch (_) {}

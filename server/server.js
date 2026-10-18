@@ -1027,8 +1027,51 @@ io.on('connection', async (socket) => {
 
       await messagesCollection.insertOne(message)
 
+      let preview = messageText
+      if (!preview && mediaType) {
+        preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
+      } else if (mediaType === 'image') {
+        preview = `📷 ${preview}`
+      } else if (mediaType === 'video') {
+        preview = `🎥 ${preview}`
+      }
+
+      // Query all unread messages from this sender to recipient so multiple messages are accumulated
+      // across both real-time socket delivery and background FCM pushes
+      const unreadMessages = await messagesCollection
+        .find({
+          senderId: userId,
+          receiverId,
+          $or: [{ readAt: null }, { readAt: { $exists: false } }],
+        })
+        .sort({ createdAt: 1 })
+        .toArray()
+
+      const unreadCount = Math.max(unreadMessages.length, 1)
+      const unreadLines = unreadMessages.slice(-6).map((m) => {
+        let txt = m.text || ''
+        if (!txt && m.mediaType) {
+          txt = m.mediaType === 'image' ? '📷 Photo' : m.mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
+        } else if (m.mediaType === 'image') {
+          txt = `📷 ${txt}`
+        } else if (m.mediaType === 'video') {
+          txt = `🎥 ${txt}`
+        }
+        return txt
+      })
+
+      if (unreadLines.length === 0 && preview) {
+        unreadLines.push(preview)
+      }
+
+      const messageWithUnread = {
+        ...message,
+        unreadCount,
+        unreadLines,
+      }
+
       io.to(userId).emit('private:message', message)
-      io.to(receiverId).emit('private:message', message)
+      io.to(receiverId).emit('private:message', messageWithUnread)
 
       // ── Cloud Push Notification via Firebase (for closed/background mobile app) ──
       // Only send FCM when the receiver does NOT have a live socket connection.
@@ -1041,42 +1084,6 @@ io.on('connection', async (socket) => {
       const receiverTokens = rawTokens.filter((t) => typeof t === 'string' && t.trim().length > 0)
 
       if (firebaseMessaging && receiverTokens.length > 0 && !isReceiverOnline) {
-        let preview = messageText
-        if (!preview && mediaType) {
-          preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
-        } else if (mediaType === 'image') {
-          preview = `📷 ${preview}`
-        } else if (mediaType === 'video') {
-          preview = `🎥 ${preview}`
-        }
-
-        // Query all unread messages from this sender to recipient so multiple messages are accumulated
-        const unreadMessages = await messagesCollection
-          .find({
-            senderId: userId,
-            receiverId,
-            $or: [{ readAt: null }, { readAt: { $exists: false } }],
-          })
-          .sort({ createdAt: 1 })
-          .toArray()
-
-        const unreadCount = Math.max(unreadMessages.length, 1)
-        const unreadLines = unreadMessages.slice(-6).map((m) => {
-          let txt = m.text || ''
-          if (!txt && m.mediaType) {
-            txt = m.mediaType === 'image' ? '📷 Photo' : m.mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
-          } else if (m.mediaType === 'image') {
-            txt = `📷 ${txt}`
-          } else if (m.mediaType === 'video') {
-            txt = `🎥 ${txt}`
-          }
-          return txt
-        })
-
-        if (unreadLines.length === 0 && preview) {
-          unreadLines.push(preview)
-        }
-
         const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
         const notificationBody = unreadLines.join('\n')
 
