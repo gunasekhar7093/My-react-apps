@@ -43,8 +43,8 @@ class UserRepository {
     try {
       final data = await apiClient.getList(ApiConstants.users, authenticated: true);
       final users = data
-          .whereType<Map<String, dynamic>>()
-          .map(UserModel.fromJson)
+          .whereType<Map>()
+          .map((m) => UserModel.fromJson(Map<String, dynamic>.from(m)))
           .toList();
 
       if (currentUserId != null && currentUserId.isNotEmpty) {

@@ -526,8 +526,8 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
     }
     // Remove this token from any other user who previously logged in on this device
     await usersCollection.updateMany(
-      { id: { $ne: req.userId } },
-      { $pull: { fcmTokens: token }, $unset: { fcmToken: token } }
+      { id: { $ne: req.userId }, $or: [{ fcmTokens: token }, { fcmToken: token }] },
+      { $pull: { fcmTokens: token }, $unset: { fcmToken: '' } }
     )
     // Add token to current user's array and set latest
     const result = await usersCollection.updateOne(
@@ -596,11 +596,10 @@ app.post('/api/logout', requireAuth, async (req, res) => {
       await usersCollection.updateOne(
         { id: req.userId },
         {
-          $set: { status: 'offline', lastSeenAt, fcmTokens: [] },
-          $unset: { fcmToken: '' },
+          $set: { status: 'offline', lastSeenAt },
         }
       )
-      console.log(`[FCM] All tokens cleared on logout for user ${req.userId}`)
+      console.log(`[Logout] User ${req.userId} logged out (status set to offline)`)
     }
     io.emit('user:status', { userId: req.userId, status: 'offline', lastSeenAt })
     res.json({ message: 'Logout successful' })

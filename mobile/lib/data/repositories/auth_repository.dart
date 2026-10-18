@@ -95,7 +95,7 @@ class AuthRepository {
     try {
       final parts = token.split('.');
       if (parts.length < 2) return null;
-      final normalized = base64Url.normalize(parts[0]);
+      final normalized = base64Url.normalize(parts[1]);
       final payloadString = utf8.decode(base64Url.decode(normalized));
       final map = jsonDecode(payloadString);
       if (map is Map<String, dynamic>) {

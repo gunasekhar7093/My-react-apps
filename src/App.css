@@ -248,4 +248,28 @@
   opacity: 1;
   text-shadow: 0 0 4px rgba(255, 255, 255, 0.4);
 }
+
+.message-line.mine .unsend-btn {
+  opacity: 0;
+  transition: opacity 0.16s ease, color 0.16s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #9aa2b1;
+  padding: 6px;
+  margin-right: 4px;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  border-radius: 8px;
+}
+
+.message-line.mine:hover .unsend-btn {
+  opacity: 1;
+}
+
+.message-line.mine .unsend-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
 

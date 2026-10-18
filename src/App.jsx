@@ -639,6 +639,27 @@ function App() {
     }
   }
 
+  async function unsendMessage(messageId) {
+    if (!messageId) return
+    setMessages((current) => current.filter((msg) => msg.id !== messageId))
+    const currentPartnerId = selectedUserRef.current?.id
+    if (currentPartnerId) {
+      setConversationCache((cache) => ({
+        ...cache,
+        [currentPartnerId]: (cache[currentPartnerId] || []).filter((msg) => msg.id !== messageId),
+      }))
+    }
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('message:delete', { messageId })
+    }
+    try {
+      await fetch(API_URL + '/api/messages/' + encodeURIComponent(messageId), {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + token },
+      })
+    } catch (_) {}
+  }
+
   async function logout() {
     const currentToken = token
 
@@ -758,6 +779,7 @@ function App() {
               sendMedia={sendMedia}
               apiUrl={API_URL}
               token={token}
+              unsendMessage={unsendMessage}
               onBack={() => navigate('/dashboard')}
             />
           </ProtectedRoute>
