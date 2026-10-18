@@ -165,8 +165,13 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }).toList();
 
     emit(state.copyWith(users: users));
-    // Only reconcile with server when a badge was actually incremented
-    if (event.isIncoming && !chatIsOpen) {
+
+    // If this contact does not exist in our local contact list yet, refresh user list immediately
+    final exists = state.users.any((u) => u.id == otherUserId);
+    if (!exists) {
+      add(const DashboardUsersRefreshRequested());
+    } else if (event.isIncoming && !chatIsOpen) {
+      // Only reconcile with server when a badge was actually incremented
       _reconcileUnreadCount(event.senderId);
     }
   }

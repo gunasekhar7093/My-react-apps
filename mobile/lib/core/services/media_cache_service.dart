@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import '../storage/secure_storage_service.dart';
+
 /// Service to cache media (images and videos) locally on device storage
 /// so they can be viewed and played when mobile data is turned off.
 class MediaCacheService {
@@ -25,14 +27,31 @@ class MediaCacheService {
     return dir;
   }
 
-  String _generateFilename(String url) {
+  /// Normalizes a media URL by stripping auth query parameters (e.g. ?token=...)
+  /// so that files cached by the sender or prior sessions resolve to the exact same disk cache file.
+  static String normalizeUrl(String url) {
+    if (url.trim().isEmpty) return '';
     try {
-      final uri = Uri.parse(url);
+      final uri = Uri.parse(url.trim());
+      if (uri.hasScheme && uri.hasAuthority) {
+        final port = uri.hasPort ? ':${uri.port}' : '';
+        return '${uri.scheme}://${uri.host}$port${uri.path}';
+      }
+      return uri.path.isNotEmpty ? uri.path : url.split('?').first.trim();
+    } catch (_) {
+      return url.split('?').first.trim();
+    }
+  }
+
+  String _generateFilename(String url) {
+    final normalized = normalizeUrl(url);
+    try {
+      final uri = Uri.parse(normalized);
       final lastSegment = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'media';
       final cleanSegment = lastSegment.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-      return '${url.hashCode.abs()}_$cleanSegment';
+      return '${normalized.hashCode.abs()}_$cleanSegment';
     } catch (_) {
-      return '${url.hashCode.abs()}_media.bin';
+      return '${normalized.hashCode.abs()}_media.bin';
     }
   }
 
@@ -78,7 +97,14 @@ class MediaCacheService {
     try {
       final target = await getTargetFile(url);
       final uri = Uri.parse(url);
-      final response = await http.get(uri);
+      final headers = <String, String>{};
+      if (!url.contains('token=')) {
+        final token = await SecureStorageService().getToken();
+        if (token != null && token.isNotEmpty) {
+          headers['Authorization'] = 'Bearer $token';
+        }
+      }
+      final response = await http.get(uri, headers: headers);
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
         await target.writeAsBytes(response.bodyBytes, flush: true);
         return target;

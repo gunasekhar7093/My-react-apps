@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
@@ -28,19 +27,12 @@ Future<void> _downloadMediaFile({
     }
 
     // 2. Fetch the file bytes (check local offline cache first!)
-    final cached = await MediaCacheService().getCachedFile(url);
-    final List<int> bytes;
-    if (cached != null) {
-      bytes = await cached.readAsBytes();
-    } else {
-      final uri = Uri.parse(url);
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Server returned status code ${response.statusCode}');
-      }
-      bytes = response.bodyBytes;
-      await MediaCacheService().cacheBytes(url, bytes);
+    File? file = await MediaCacheService().getCachedFile(url);
+    file ??= await MediaCacheService().downloadAndCache(url);
+    if (file == null || !await file.exists()) {
+      throw Exception('Could not download or access media file.');
     }
+    final bytes = await file.readAsBytes();
 
     // 3. Determine clean filename
     final ext = isVideo ? 'mp4' : 'jpg';

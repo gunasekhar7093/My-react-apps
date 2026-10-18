@@ -228,28 +228,22 @@ function publicUser(user) {
   return safeUser
 }
 
-function userToPublic(user) {
-  if (!user) return null
-  return publicUser(user)
-}
-
 async function getUserById(userId) {
   return usersCollection.findOne({ id: userId })
 }
 
-async function setUserStatus(userId, status, lastSeenAt = null) {
-  const update = { $set: { status } }
-  if (lastSeenAt) update.$set.lastSeenAt = lastSeenAt
-  const result = await usersCollection.findOneAndUpdate(
-    { id: userId },
-    update,
-    { returnDocument: 'after' },
-  )
-  return userToPublic(result)
+function deleteMediaFileIfPresent(mediaUrl) {
+  if (!mediaUrl || !mediaBucket) return
+  try {
+    const match = String(mediaUrl).match(/\/api\/media\/([a-fA-F0-9]{24})/)
+    if (match && match[1]) {
+      mediaBucket.delete(new ObjectId(match[1])).catch(() => {})
+    }
+  } catch (_) {}
 }
 
 async function migrateLegacyUsers() {
-  const legacyUsers = await usersCollection.find({}).toArray()
+  const legacyUsers = await usersCollection.find({ password: { $exists: true, $ne: '' } }).toArray()
   let changed = false
 
   for (const user of legacyUsers) {
@@ -411,7 +405,7 @@ app.post('/api/register', async (req, res) => {
     }
 
     const newUser = {
-      id: 'u' + Date.now(),
+      id: 'u' + Date.now() + randomBytes(4).toString('hex'),
       name: name.trim(),
       username: normalizedUsername,
       passwordHash: null,
@@ -646,7 +640,7 @@ app.post('/api/messages/:userId/:otherUserId/read', requireAuth, async (req, res
     // Notify the sender in real-time so their ticks turn into Two White Ticks (✓✓)
     io.to(otherUserId).emit('messages:read', {
       readerId: userId,
-      conversationWith: otherUserId,
+      conversationWith: userId,
       readAt: now,
     })
 
@@ -702,7 +696,7 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
       if (markResult.modifiedCount > 0) {
         io.to(otherUserId).emit('messages:read', {
           readerId: userId,
-          conversationWith: otherUserId,
+          conversationWith: userId,
           readAt: now,
         })
       }
@@ -739,6 +733,7 @@ app.delete('/api/messages/:messageId', requireAuth, async (req, res) => {
     }
 
     await messagesCollection.deleteOne({ id: messageId })
+    deleteMediaFileIfPresent(message.mediaUrl)
 
     const deletePayload = {
       messageId,
@@ -1233,7 +1228,7 @@ io.on('connection', async (socket) => {
 
       io.to(otherUserId).emit('messages:read', {
         readerId: userId,
-        conversationWith: otherUserId,
+        conversationWith: userId,
         readAt: now,
       })
     } catch (err) {
@@ -1291,6 +1286,7 @@ io.on('connection', async (socket) => {
       if (message.senderId !== userId) return
 
       await messagesCollection.deleteOne({ id: messageId })
+      deleteMediaFileIfPresent(message.mediaUrl)
 
       const deletePayload = {
         messageId,
@@ -1333,10 +1329,11 @@ async function startServer() {
     mediaBucket = new GridFSBucket(db, { bucketName: 'media' })
 
     await Promise.all([
-      usersCollection.createIndex({ id: 1 }, { unique: true }),
-      usersCollection.createIndex({ username: 1 }, { unique: true }),
-      messagesCollection.createIndex({ senderId: 1, receiverId: 1, createdAt: -1 }),
-      messagesCollection.createIndex({ receiverId: 1, senderId: 1, createdAt: -1 }),
+      usersCollection.createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      usersCollection.createIndex({ username: 1 }, { unique: true }).catch(() => {}),
+      messagesCollection.createIndex({ id: 1 }).catch(() => {}),
+      messagesCollection.createIndex({ senderId: 1, receiverId: 1, createdAt: -1 }).catch(() => {}),
+      messagesCollection.createIndex({ receiverId: 1, senderId: 1, createdAt: -1 }).catch(() => {}),
     ])
 
     await migrateLegacyUsers()

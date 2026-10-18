@@ -265,7 +265,8 @@ function App() {
 
     // ── Two White Ticks (✓✓): Recipient has opened and read the message ─────
     socket.on('messages:read', (data) => {
-      if (!data?.readerId) return
+      const readerId = data?.readerId || data?.conversationWith
+      if (!readerId) return
       const readAt = data.readAt || new Date().toISOString()
       setMessages((current) =>
         current.map((msg) =>
@@ -274,6 +275,17 @@ function App() {
             : msg
         )
       )
+      setConversationCache((cache) => {
+        if (!cache[readerId]) return cache
+        return {
+          ...cache,
+          [readerId]: cache[readerId].map((msg) =>
+            msg.senderId === user.id && (!msg.readAt || !msg.deliveredAt)
+              ? { ...msg, readAt, deliveredAt: readAt, status: 'read' }
+              : msg
+          ),
+        }
+      })
     })
 
     // ── Two Gray Ticks (✓✓): Message delivered to recipient's device ────────
@@ -288,6 +300,33 @@ function App() {
             : msg
         )
       )
+      setConversationCache((cache) => {
+        if (!cache[data.receiverId]) return cache
+        return {
+          ...cache,
+          [data.receiverId]: cache[data.receiverId].map((msg) =>
+            msg.senderId === user.id && !msg.deliveredAt && (!ids || ids.has(msg.id))
+              ? { ...msg, deliveredAt, status: 'delivered' }
+              : msg
+          ),
+        }
+      })
+    })
+
+    // ── Real-time message unsend / deletion ──────────────────────────────────
+    socket.on('message:delete', ({ messageId, senderId, receiverId }) => {
+      if (!messageId) return
+      setMessages((current) => current.filter((msg) => msg.id !== messageId))
+      const otherId = senderId === user.id ? receiverId : senderId
+      if (otherId) {
+        setConversationCache((cache) => {
+          if (!cache[otherId]) return cache
+          return {
+            ...cache,
+            [otherId]: cache[otherId].filter((msg) => msg.id !== messageId),
+          }
+        })
+      }
     })
 
     // ── Instant offline/online signaling ─────────────────────────────────────
