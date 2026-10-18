@@ -186,6 +186,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     // Dismiss notifications for this user when opening their chat
     NotificationService().cancelSenderNotification(user.id);
 
+    // Suppress any new notifications while this chat is on screen
+    NotificationService().openChatUserId = user.id;
+
     // Tell the bloc the chat is open so unread badges are suppressed
     _bloc.add(DashboardOpenChatChanged(user.id));
     await Navigator.of(context).push(
@@ -198,7 +201,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         ),
       ),
     );
-    // Chat closed — re-enable unread tracking and refresh user list
+    // Chat closed — re-enable notifications and refresh user list
+    NotificationService().openChatUserId = null;
     if (mounted) {
       _bloc
         ..add(const DashboardOpenChatChanged(null))

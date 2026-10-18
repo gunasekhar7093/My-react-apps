@@ -106,6 +106,17 @@ class NotificationService {
   final Map<String, List<String>> _senderMessages = {};
   final Map<String, String> _senderNames = {};
 
+  /// Deduplication: track the last notification shown per sender (text + timestamp).
+  /// Prevents the same message appearing twice when both the socket path and the
+  /// FCM foreground handler both call showMessageNotification.
+  final Map<String, String> _lastShownText = {};
+  final Map<String, DateTime> _lastShownTime = {};
+  static const _dedupWindowMs = 3000;
+
+  /// Set this to the currently open chat user's ID so that incoming notifications
+  /// from that user are suppressed while the conversation is visible on screen.
+  String? openChatUserId;
+
   String _formatPreview(String messageText, String? mediaType) {
     String text = messageText.trim();
     if (text.isEmpty && mediaType != null) {
@@ -139,9 +150,30 @@ class NotificationService {
         await initialize();
       }
 
+      // If the user is actively looking at this sender's chat, don't show a
+      // heads-up banner — it would be intrusive and redundant.
+      if (openChatUserId != null && openChatUserId == senderId) return;
+
       _senderNames[senderId] = senderName;
 
       final preview = _formatPreview(messageText, mediaType);
+
+      // Deduplication: skip if the exact same preview was already notified
+      // within the dedup window (handles socket + FCM double-fire for the same
+      // message when the app is in the foreground).
+      if (historicalLines == null || historicalLines.isEmpty) {
+        final lastText = _lastShownText[senderId];
+        final lastTime = _lastShownTime[senderId];
+        final now = DateTime.now();
+        if (lastText == preview &&
+            lastTime != null &&
+            now.difference(lastTime).inMilliseconds < _dedupWindowMs) {
+          return;
+        }
+        _lastShownText[senderId] = preview;
+        _lastShownTime[senderId] = now;
+      }
+
       final messages = _senderMessages.putIfAbsent(senderId, () => []);
 
       if (historicalLines != null && historicalLines.isNotEmpty) {
@@ -218,6 +250,8 @@ class NotificationService {
     if (senderId.isEmpty) return;
     _senderMessages.remove(senderId);
     _senderNames.remove(senderId);
+    _lastShownText.remove(senderId);
+    _lastShownTime.remove(senderId);
     final notifId = (senderId.hashCode & 0x7FFFFFFF);
     try {
       await _notificationsPlugin.cancel(id: notifId, tag: senderId);
@@ -236,6 +270,8 @@ class NotificationService {
   Future<void> cancelAllNotifications() async {
     _senderMessages.clear();
     _senderNames.clear();
+    _lastShownText.clear();
+    _lastShownTime.clear();
     try {
       await _notificationsPlugin.cancelAll();
     } catch (_) {}

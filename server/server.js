@@ -1030,14 +1030,17 @@ io.on('connection', async (socket) => {
       io.to(userId).emit('private:message', message)
       io.to(receiverId).emit('private:message', message)
 
-      // ── Cloud Push Notification via Firebase (for closed/background mobile app)
+      // ── Cloud Push Notification via Firebase (for closed/background mobile app) ──
+      // Only send FCM when the receiver does NOT have a live socket connection.
+      // When they are online (socket connected), the real-time socket message already
+      // reaches them — sending FCM on top causes duplicate notifications.
       const rawTokens = Array.isArray(receiver.fcmTokens) ? receiver.fcmTokens : []
       if (receiver.fcmToken && !rawTokens.includes(receiver.fcmToken)) {
         rawTokens.push(receiver.fcmToken)
       }
       const receiverTokens = rawTokens.filter((t) => typeof t === 'string' && t.trim().length > 0)
 
-      if (firebaseMessaging && receiverTokens.length > 0) {
+      if (firebaseMessaging && receiverTokens.length > 0 && !isReceiverOnline) {
         let preview = messageText
         if (!preview && mediaType) {
           preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
