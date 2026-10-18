@@ -22,6 +22,7 @@ typedef MessagesDeliveredCallback = void Function({
 });
 typedef SocketConnectionCallback = void Function();
 typedef SocketErrorCallback = void Function(String message);
+typedef MessageDeletedCallback = void Function(String messageId);
 
 /// A single Socket.IO client that is created once in DashboardPage and shared
 /// with ChatPage.  ChatPage registers page-level callbacks via [addOnMessage]
@@ -41,6 +42,7 @@ class SocketService {
   final List<UserStatusCallback> _extraStatusCallbacks = [];
   final List<MessagesReadCallback> _extraMessagesReadCallbacks = [];
   final List<MessagesDeliveredCallback> _extraMessagesDeliveredCallbacks = [];
+  final List<MessageDeletedCallback> _extraMessageDeletedCallbacks = [];
 
   SocketService({SecureStorageService? storage})
       : storage = storage ?? SecureStorageService();
@@ -144,6 +146,14 @@ class SocketService {
           cb(receiverId: receiverId, messageIds: messageIds, deliveredAt: deliveredAt);
         }
       })
+      ..on('message:delete', (data) {
+        if (data is! Map) return;
+        final messageId = data['messageId']?.toString();
+        if (messageId == null || messageId.isEmpty) return;
+        for (final cb in List.of(_extraMessageDeletedCallbacks)) {
+          cb(messageId);
+        }
+      })
       ..connect();
   }
 
@@ -215,6 +225,25 @@ class SocketService {
     if (messageIds.isNotEmpty) {
       _socket?.emit('messages:delivered', {'messageIds': messageIds});
     }
+  }
+
+  /// Add a listener for when a message is deleted. Call [removeOnMessageDeleted] in dispose.
+  void addOnMessageDeleted(MessageDeletedCallback callback) {
+    _extraMessageDeletedCallbacks.add(callback);
+  }
+
+  /// Remove a previously added delete listener.
+  void removeOnMessageDeleted([MessageDeletedCallback? callback]) {
+    if (callback != null) {
+      _extraMessageDeletedCallbacks.remove(callback);
+    } else {
+      _extraMessageDeletedCallbacks.clear();
+    }
+  }
+
+  /// Notify server and receiver that a message has been deleted.
+  void emitMessageDelete(String messageId) {
+    _socket?.emit('message:delete', {'messageId': messageId});
   }
 
   // ── Message sending ───────────────────────────────────────────────────────

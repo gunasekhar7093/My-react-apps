@@ -33,4 +33,11 @@ class MessageRepository {
       authenticated: true,
     );
   }
+
+  Future<void> deleteMessage(String messageId) async {
+    await apiClient.delete(
+      '/api/messages/$messageId',
+      authenticated: true,
+    );
+  }
 }

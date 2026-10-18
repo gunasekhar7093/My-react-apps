@@ -725,6 +725,31 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
   }
 })
 
+// ── Delete message endpoint ────────────────────────────────────────────────
+app.delete('/api/messages/:messageId', requireAuth, async (req, res) => {
+  try {
+    const { messageId } = req.params
+    const message = await messagesCollection.findOne({ id: messageId })
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' })
+    }
+
+    if (message.senderId !== req.userId && message.receiverId !== req.userId) {
+      return res.status(403).json({ error: 'You are not authorized to delete this message' })
+    }
+
+    await messagesCollection.deleteOne({ id: messageId })
+
+    io.to(message.senderId).emit('message:delete', { messageId })
+    io.to(message.receiverId).emit('message:delete', { messageId })
+
+    res.json({ ok: true, messageId })
+  } catch (error) {
+    console.error('Could not delete message:', error.message)
+    res.status(500).json({ error: 'Could not delete message' })
+  }
+})
+
 app.post('/api/upload', requireAuth, (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err instanceof multer.MulterError) {
@@ -1223,6 +1248,26 @@ io.on('connection', async (socket) => {
       }
     } catch (err) {
       console.error('Socket messages:delivered error:', err.message)
+    }
+  })
+
+  // ── Real-time Message deletion ──────────────────────────────────────────
+  socket.on('message:delete', async (payload) => {
+    try {
+      const messageId = typeof payload?.messageId === 'string' ? payload.messageId.trim() : ''
+      if (!messageId) return
+
+      const message = await messagesCollection.findOne({ id: messageId })
+      if (!message) return
+
+      if (message.senderId !== userId && message.receiverId !== userId) return
+
+      await messagesCollection.deleteOne({ id: messageId })
+
+      io.to(message.senderId).emit('message:delete', { messageId })
+      io.to(message.receiverId).emit('message:delete', { messageId })
+    } catch (err) {
+      console.error('Socket message:delete error:', err.message)
     }
   })
 

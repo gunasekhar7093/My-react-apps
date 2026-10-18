@@ -47,3 +47,13 @@ class ChatMessagesDeliveredReceived extends ChatEvent {
     required this.deliveredAt,
   });
 }
+
+class ChatMessageDeleteRequested extends ChatEvent {
+  final String messageId;
+  const ChatMessageDeleteRequested(this.messageId);
+}
+
+class ChatMessageDeletedReceived extends ChatEvent {
+  final String messageId;
+  const ChatMessageDeletedReceived(this.messageId);
+}

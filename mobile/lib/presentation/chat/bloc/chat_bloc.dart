@@ -27,6 +27,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatMarkedRead>(_onMarkedRead);
     on<ChatMessagesReadReceived>(_onMessagesReadReceived);
     on<ChatMessagesDeliveredReceived>(_onMessagesDeliveredReceived);
+    on<ChatMessageDeleteRequested>(_onDeleteRequested);
+    on<ChatMessageDeletedReceived>(_onDeletedReceived);
   }
 
   Future<void> _onStarted(ChatStarted event, Emitter<ChatState> emit) async {
@@ -142,6 +144,28 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       }
       return m;
     }).toList();
+    emit(state.copyWith(messages: updated));
+  }
+
+  Future<void> _onDeleteRequested(
+    ChatMessageDeleteRequested event,
+    Emitter<ChatState> emit,
+  ) async {
+    final updated = state.messages.where((m) => m.id != event.messageId).toList();
+    emit(state.copyWith(messages: updated));
+    try {
+      socket.emitMessageDelete(event.messageId);
+      await repository.deleteMessage(event.messageId);
+    } catch (_) {
+      // Optimistic delete
+    }
+  }
+
+  void _onDeletedReceived(
+    ChatMessageDeletedReceived event,
+    Emitter<ChatState> emit,
+  ) {
+    final updated = state.messages.where((m) => m.id != event.messageId).toList();
     emit(state.copyWith(messages: updated));
   }
 }

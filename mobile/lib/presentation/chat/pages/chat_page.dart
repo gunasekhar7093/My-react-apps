@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -155,6 +156,11 @@ class _ChatPageState extends State<ChatPage> {
         ));
       }
     });
+
+    _socket.addOnMessageDeleted((messageId) {
+      if (!mounted) return;
+      _bloc.add(ChatMessageDeletedReceived(messageId));
+    });
   }
 
   void _scrollToBottom() {
@@ -178,6 +184,7 @@ class _ChatPageState extends State<ChatPage> {
     _socket.removeOnUserStatus();
     _socket.removeOnMessagesRead();
     _socket.removeOnMessagesDelivered();
+    _socket.removeOnMessageDeleted();
     _bloc.close();
     super.dispose();
   }
@@ -188,6 +195,149 @@ class _ChatPageState extends State<ChatPage> {
     _bloc.add(ChatMessageSendRequested(text));
     _controller.clear();
     _scrollToBottom();
+  }
+
+  void _showMessageActionMenu(MessageModel message) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final canCopy = message.text.isNotEmpty || (message.mediaUrl != null && message.mediaUrl!.isNotEmpty);
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: isDark ? const Color(0xFF1E2433) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              if (canCopy)
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.copy_rounded, color: AppTheme.primaryColor, size: 20),
+                  ),
+                  title: Text(
+                    'Copy',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetCtx).pop();
+                    final textToCopy = message.text.isNotEmpty ? message.text : (message.mediaUrl ?? '');
+                    if (textToCopy.isNotEmpty) {
+                      await Clipboard.setData(ClipboardData(text: textToCopy));
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Message copied to clipboard'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                ),
+                title: const Text(
+                  'Delete',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.redAccent,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _showDeleteConfirmationDialog(message);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDeleteConfirmationDialog(MessageModel message) {
+    final theme = Theme.of(context);
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: theme.brightness == Brightness.dark
+            ? theme.colorScheme.surfaceContainerHigh
+            : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Text(
+          'delete this message?',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: Text(
+              'cancel',
+              style: TextStyle(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogCtx).pop();
+              _bloc.add(ChatMessageDeleteRequested(message.id));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Message deleted'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            child: const Text(
+              'delete',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _openAttachmentPicker() {
@@ -731,6 +881,7 @@ class _ChatPageState extends State<ChatPage> {
                                   token: _token,
                                   senderName: senderName,
                                   avatarInitial: avatarInitial,
+                                  onLongPress: () => _showMessageActionMenu(current),
                                 ),
                               ],
                             );
@@ -1036,6 +1187,7 @@ class _Bubble extends StatelessWidget {
   final String? token;
   final String senderName;
   final String? avatarInitial;
+  final VoidCallback? onLongPress;
 
   const _Bubble({
     required this.message,
@@ -1044,6 +1196,7 @@ class _Bubble extends StatelessWidget {
     this.token,
     required this.senderName,
     this.avatarInitial,
+    this.onLongPress,
   });
 
   @override Widget build(BuildContext context) {
@@ -1068,9 +1221,11 @@ class _Bubble extends StatelessWidget {
 
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        margin: const EdgeInsets.only(bottom: 6),
+      child: GestureDetector(
+        onLongPress: onLongPress,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          margin: const EdgeInsets.only(bottom: 6),
         padding: hasMedia
             ? const EdgeInsets.all(5)
             : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1115,7 +1270,8 @@ class _Bubble extends StatelessWidget {
             ? _buildMediaBubble(context, theme, fullMediaUrl)
             : _buildTextBubble(context, theme, maxWidth - 24),
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildTextBubble(BuildContext context, ThemeData theme, double contentMaxWidth) {
