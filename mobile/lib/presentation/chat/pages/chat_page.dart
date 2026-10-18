@@ -324,12 +324,6 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: () {
               Navigator.of(dialogCtx).pop();
               _bloc.add(ChatMessageDeleteRequested(message.id));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Message unsent'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
             },
             child: const Text(
               'unsend',
