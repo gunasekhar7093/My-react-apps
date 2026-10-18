@@ -1189,15 +1189,27 @@ class _Bubble extends StatelessWidget {
       );
     }
 
-    // Multi-line: Hug the text width instead of stretching across the screen
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Text(message.text, style: textStyle),
-        const SizedBox(height: 2),
-        timeWidget,
-      ],
+    // Multi-line: Hug the text width instead of stretching across the screen,
+    // keeping text naturally left-aligned and timestamp at the bottom-right.
+    final bubbleWidth = (textPainter.width > timeWidth ? textPainter.width : timeWidth).clamp(0.0, contentMaxWidth);
+    return SizedBox(
+      width: bubbleWidth,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message.text,
+            style: textStyle,
+            textAlign: TextAlign.start,
+          ),
+          const SizedBox(height: 2),
+          Align(
+            alignment: Alignment.bottomRight,
+            child: timeWidget,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1308,9 +1320,16 @@ class _Bubble extends StatelessWidget {
             ),
           ),
         if (message.text.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
-            child: Text(message.text, style: textStyle),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+              child: Text(
+                message.text,
+                style: textStyle,
+                textAlign: TextAlign.start,
+              ),
+            ),
           ),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 3, 6, 4),
