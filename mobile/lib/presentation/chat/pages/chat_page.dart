@@ -249,14 +249,6 @@ class _ChatPageState extends State<ChatPage> {
                     final textToCopy = message.text.isNotEmpty ? message.text : (message.mediaUrl ?? '');
                     if (textToCopy.isNotEmpty) {
                       await Clipboard.setData(ClipboardData(text: textToCopy));
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Message copied to clipboard'),
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                      }
                     }
                   },
                 ),
