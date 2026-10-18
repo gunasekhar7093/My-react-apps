@@ -19,7 +19,9 @@ import '../../dashboard/bloc/dashboard_event.dart';
 import '../bloc/chat_bloc.dart';
 import '../bloc/chat_event.dart';
 import '../bloc/chat_state.dart';
+import '../widgets/cached_media_image.dart';
 import '../widgets/media_viewers.dart';
+import '../../../core/services/media_cache_service.dart';
 
 class ChatPage extends StatefulWidget {
   final UserModel user;
@@ -611,10 +613,18 @@ class _ChatPageState extends State<ChatPage> {
                                         Navigator.of(sheetContext).pop();
                                       }
 
+                                      final mediaUrl = uploadRes['mediaUrl']?.toString();
+                                      if (mediaUrl != null && mediaUrl.isNotEmpty) {
+                                        final fullUrl = mediaUrl.startsWith('http')
+                                            ? mediaUrl
+                                            : '${ApiConstants.baseUrl}$mediaUrl';
+                                        MediaCacheService().cacheBytes(fullUrl, bytes);
+                                      }
+
                                       _bloc.add(
                                         ChatMessageSendRequested(
                                           captionController.text.trim(),
-                                          mediaUrl: uploadRes['mediaUrl']?.toString(),
+                                          mediaUrl: mediaUrl,
                                           mediaType: uploadRes['mediaType']?.toString() ?? (isVideo ? 'video' : 'image'),
                                           mediaName: uploadRes['mediaName']?.toString() ?? file.name,
                                           mediaSize: uploadRes['mediaSize'] is int ? uploadRes['mediaSize'] as int : bytes.length,
@@ -1489,38 +1499,13 @@ class _Bubble extends StatelessWidget {
                 ),
               );
             },
-            child: ClipRRect(
+            child: CachedMediaImage(
+              imageUrl: fullMediaUrl,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: 200,
+              heroTag: 'media_${message.id}',
               borderRadius: BorderRadius.circular(12),
-              child: Hero(
-                tag: 'media_${message.id}',
-                child: Image.network(
-                  fullMediaUrl,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: 200,
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      height: 180,
-                      color: Colors.black12,
-                      child: const Center(
-                        child: SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    height: 140,
-                    color: Colors.black12,
-                    child: const Center(
-                      child: Icon(Icons.broken_image_rounded, size: 40, color: Colors.grey),
-                    ),
-                  ),
-                ),
-              ),
             ),
           ),
         if (message.text.isNotEmpty)

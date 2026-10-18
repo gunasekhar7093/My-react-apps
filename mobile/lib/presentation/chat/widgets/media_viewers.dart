@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../core/services/media_cache_service.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// Helper to download media file and save directly to device Gallery & Google Photos.
@@ -26,11 +27,19 @@ Future<void> _downloadMediaFile({
       }
     }
 
-    // 2. Fetch the file bytes from URL
-    final uri = Uri.parse(url);
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
-      throw Exception('Server returned status code ${response.statusCode}');
+    // 2. Fetch the file bytes (check local offline cache first!)
+    final cached = await MediaCacheService().getCachedFile(url);
+    final List<int> bytes;
+    if (cached != null) {
+      bytes = await cached.readAsBytes();
+    } else {
+      final uri = Uri.parse(url);
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Server returned status code ${response.statusCode}');
+      }
+      bytes = response.bodyBytes;
+      await MediaCacheService().cacheBytes(url, bytes);
     }
 
     // 3. Determine clean filename
@@ -48,7 +57,7 @@ Future<void> _downloadMediaFile({
     final tempDir = await getTemporaryDirectory();
     final tempFilePath = '${tempDir.path}/$cleanName';
     final tempFile = File(tempFilePath);
-    await tempFile.writeAsBytes(response.bodyBytes);
+    await tempFile.writeAsBytes(bytes);
 
     // 5. Register with native Android/iOS MediaStore & save into device Gallery / Google Photos
     if (isVideo) {
@@ -65,7 +74,7 @@ Future<void> _downloadMediaFile({
           final downloadFilePath = '${downloadDir.path}/$cleanName';
           final downloadFile = File(downloadFilePath);
           if (!await downloadFile.exists()) {
-            await downloadFile.writeAsBytes(response.bodyBytes);
+            await downloadFile.writeAsBytes(bytes);
           }
         }
       }
@@ -234,6 +243,26 @@ class FullScreenImageViewer extends StatefulWidget {
 
 class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
   bool _downloading = false;
+  File? _cachedFile;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkCache();
+  }
+
+  Future<void> _checkCache() async {
+    final file = await MediaCacheService().getCachedFile(widget.imageUrl);
+    if (!mounted) return;
+    if (file != null) {
+      setState(() => _cachedFile = file);
+    } else {
+      final downloaded = await MediaCacheService().downloadAndCache(widget.imageUrl);
+      if (mounted && downloaded != null) {
+        setState(() => _cachedFile = downloaded);
+      }
+    }
+  }
 
   Future<void> _handleDownload() async {
     if (_downloading) return;
@@ -322,43 +351,34 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
                               maxScale: 4.0,
                               child: Hero(
                                 tag: widget.heroTag,
-                                child: Image.network(
-                                  widget.imageUrl,
-                                  fit: BoxFit.contain,
-                                  loadingBuilder: (context, child, loadingProgress) {
-                                    if (loadingProgress == null) return child;
-                                    final total = loadingProgress.expectedTotalBytes;
-                                    final loaded = loadingProgress.cumulativeBytesLoaded;
-                                    final progress = total != null && total > 0 ? loaded / total : null;
-                                    return SizedBox(
-                                      width: 120,
-                                      height: 120,
-                                      child: Center(
-                                        child: CircularProgressIndicator(
-                                          value: progress,
-                                          strokeWidth: 2.5,
-                                          color: Colors.white70,
-                                        ),
+                                child: _cachedFile != null
+                                    ? Image.file(
+                                        _cachedFile!,
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (context, error, stackTrace) => _buildErrorState(),
+                                      )
+                                    : Image.network(
+                                        widget.imageUrl,
+                                        fit: BoxFit.contain,
+                                        loadingBuilder: (context, child, loadingProgress) {
+                                          if (loadingProgress == null) return child;
+                                          final total = loadingProgress.expectedTotalBytes;
+                                          final loaded = loadingProgress.cumulativeBytesLoaded;
+                                          final progress = total != null && total > 0 ? loaded / total : null;
+                                          return SizedBox(
+                                            width: 120,
+                                            height: 120,
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                value: progress,
+                                                strokeWidth: 2.5,
+                                                color: Colors.white70,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        errorBuilder: (context, error, stackTrace) => _buildErrorState(),
                                       ),
-                                    );
-                                  },
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return const Padding(
-                                      padding: EdgeInsets.all(32),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.broken_image_rounded, color: Colors.white54, size: 54),
-                                          SizedBox(height: 12),
-                                          Text(
-                                            'Could not load image',
-                                            style: TextStyle(color: Colors.white70, fontSize: 14),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                ),
                               ),
                             ),
 
@@ -569,10 +589,27 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
       ),
     );
   }
+
+  Widget _buildErrorState() {
+    return const Padding(
+      padding: EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.broken_image_rounded, color: Colors.white54, size: 54),
+          SizedBox(height: 12),
+          Text(
+            'Could not load image',
+            style: TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Compact in-bubble video preview card with play overlay.
-class VideoPlayerBubble extends StatelessWidget {
+class VideoPlayerBubble extends StatefulWidget {
   final String videoUrl;
   final String? filename;
   final int? fileSize;
@@ -587,9 +624,20 @@ class VideoPlayerBubble extends StatelessWidget {
   });
 
   @override
+  State<VideoPlayerBubble> createState() => _VideoPlayerBubbleState();
+}
+
+class _VideoPlayerBubbleState extends State<VideoPlayerBubble> {
+  @override
+  void initState() {
+    super.initState();
+    MediaCacheService().downloadAndCache(widget.videoUrl);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -654,7 +702,7 @@ class VideoPlayerBubble extends StatelessWidget {
                       const Icon(Icons.videocam_rounded, color: Colors.white, size: 14),
                       const SizedBox(width: 5),
                       Text(
-                        filename ?? 'Video',
+                        widget.filename ?? 'Video',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -668,7 +716,7 @@ class VideoPlayerBubble extends StatelessWidget {
                 ),
               ),
               // Bottom size indicator if available
-              if (fileSize != null && fileSize! > 0)
+              if (widget.fileSize != null && widget.fileSize! > 0)
                 Positioned(
                   bottom: 8,
                   right: 10,
@@ -679,7 +727,7 @@ class VideoPlayerBubble extends StatelessWidget {
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      _formatBytes(fileSize!),
+                      _formatBytes(widget.fileSize!),
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 10,
@@ -794,9 +842,17 @@ class _FullScreenVideoViewerState extends State<FullScreenVideoViewer> {
 
   Future<void> _initializePlayer() async {
     try {
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
-      );
+      final cachedFile = await MediaCacheService().getCachedFile(widget.videoUrl);
+      final VideoPlayerController controller;
+      if (cachedFile != null) {
+        controller = VideoPlayerController.file(cachedFile);
+      } else {
+        controller = VideoPlayerController.networkUrl(
+          Uri.parse(widget.videoUrl),
+        );
+        // Pre-cache video for offline playback
+        MediaCacheService().downloadAndCache(widget.videoUrl);
+      }
       _controller = controller;
       await controller.initialize();
       controller.addListener(() {
