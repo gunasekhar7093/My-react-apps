@@ -390,18 +390,27 @@ app.post('/api/register', async (req, res) => {
     const { name, username, password, phone } = req.body
 
     if (!name?.trim() || !username?.trim() || !password) {
-      return res.status(400).json({ error: 'Name, username/email and password are required' })
+      return res.status(400).json({ error: 'Name, email and password are required' })
+    }
+
+    if (name.trim().length < 2) {
+      return res.status(400).json({ error: 'Name must be at least 2 characters' })
+    }
+
+    const normalizedUsername = username.trim().toLowerCase()
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
+    if (!emailRegex.test(normalizedUsername)) {
+      return res.status(400).json({ error: 'Please enter a valid email address (e.g. name@example.com)' })
     }
 
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' })
     }
 
-    const normalizedUsername = username.trim().toLowerCase()
     const existingUser = await usersCollection.findOne({ username: normalizedUsername })
 
     if (existingUser) {
-      return res.status(409).json({ error: 'An account with this username/email already exists' })
+      return res.status(409).json({ error: 'An account with this email address already exists' })
     }
 
     const newUser = {

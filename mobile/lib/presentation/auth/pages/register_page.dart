@@ -117,21 +117,38 @@ class _RegisterPageState extends State<RegisterPage> {
                             hintText: 'e.g. Alex Johnson',
                             prefixIcon: Icon(Icons.badge_outlined, size: 20),
                           ),
-                          validator: (v) => v == null || v.trim().isEmpty ? 'Please enter your name' : null,
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Please enter your name';
+                            }
+                            if (v.trim().length < 2) {
+                              return 'Name must be at least 2 characters';
+                            }
+                            return null;
+                          },
                         ),
                         const SizedBox(height: 14),
 
-                        // Username / Email
+                        // Email Address
                         TextFormField(
                           controller: _username,
                           keyboardType: TextInputType.emailAddress,
                           textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(
-                            labelText: 'Username or Email',
+                            labelText: 'Email Address',
                             hintText: 'e.g. alex@example.com',
                             prefixIcon: Icon(Icons.alternate_email_rounded, size: 20),
                           ),
-                          validator: (v) => v == null || v.trim().isEmpty ? 'Please enter your username or email' : null,
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Please enter your email address';
+                            }
+                            final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+                            if (!emailRegex.hasMatch(v.trim())) {
+                              return 'Please enter a valid email address (e.g. alex@example.com)';
+                            }
+                            return null;
+                          },
                         ),
                         const SizedBox(height: 14),
 
@@ -145,6 +162,15 @@ class _RegisterPageState extends State<RegisterPage> {
                             hintText: 'e.g. +1 555 123 4567',
                             prefixIcon: Icon(Icons.phone_outlined, size: 20),
                           ),
+                          validator: (v) {
+                            if (v != null && v.trim().isNotEmpty) {
+                              final digitsOnly = v.replaceAll(RegExp(r'\D'), '');
+                              if (digitsOnly.length < 7 || digitsOnly.length > 15) {
+                                return 'Please enter a valid phone number (7-15 digits)';
+                              }
+                            }
+                            return null;
+                          },
                         ),
                         const SizedBox(height: 14),
 
