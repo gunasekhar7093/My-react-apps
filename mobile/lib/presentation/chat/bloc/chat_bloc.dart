@@ -150,19 +150,34 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
     // If this is our own message echo from server, check if it matches a pending message
     if (message.senderId == userId) {
-      // 1. Direct match by clientTempId (exact 1-to-1 match)
-      // 2. Fallback match by matching temp_ id or pending state with identical text/media
-      final pendingIdx = state.messages.indexWhere(
-        (m) =>
-            (message.clientTempId != null && m.id == message.clientTempId) ||
-            ((m.isPending || m.id.startsWith('temp_')) &&
-                (m.text == message.text ||
-                    (m.mediaUrl != null && m.mediaUrl == message.mediaUrl))),
-      );
+      // If already processed (by flush loop or previous echo), ignore duplicate
+      if (state.messages.any((item) => item.id == message.id)) return;
+      if (message.clientTempId != null &&
+          state.messages.any((item) => item.clientTempId == message.clientTempId && !item.id.startsWith('temp_'))) {
+        return;
+      }
+
+      // 1. STRICT match by clientTempId only (exact 1-to-1 match, no ambiguity)
+      int pendingIdx = -1;
+      if (message.clientTempId != null) {
+        pendingIdx = state.messages.indexWhere(
+          (m) => m.id == message.clientTempId,
+        );
+      }
+
+      // 2. Fallback: match by clientTempId field on the pending message
+      if (pendingIdx == -1 && message.clientTempId != null) {
+        pendingIdx = state.messages.indexWhere(
+          (m) => (m.isPending || m.id.startsWith('temp_')) &&
+              m.clientTempId == message.clientTempId,
+        );
+      }
+
       if (pendingIdx != -1) {
         final tempId = state.messages[pendingIdx].id;
         final updatedList = List<MessageModel>.from(state.messages);
         updatedList[pendingIdx] = message;
+        updatedList.sort((a, b) => a.createdAt.compareTo(b.createdAt));
         emit(state.copyWith(messages: updatedList, status: ChatStatus.ready));
 
         repository.replacePendingMessage(
