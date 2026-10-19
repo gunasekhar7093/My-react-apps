@@ -4,6 +4,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 import 'core/services/fcm_service.dart';
@@ -24,18 +26,35 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 /// WhatsApp-style fully autonomous background message handler:
 /// 1. Intercepts silent data-only FCM push when app is closed / killed / backgrounded.
-/// 2. Initializes local storage connection in the standalone Dart isolate.
-/// 3. Parses and immediately writes incoming chat message into local cache (messages & contacts).
-/// 4. Triggers local notification banner only after local cache write succeeds.
+/// 2. Bypasses platform channels by using pre-cached paths and cross-isolate safe SharedPreferences.
+/// 3. Initializes local storage connection in the standalone Dart isolate.
+/// 4. Parses and immediately writes incoming chat message into local cache (messages & contacts).
+/// 5. Triggers local notification banner only after local cache write succeeds.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // 1. Session check: if user is logged out, drop background notification
-    final userToken = await SecureStorageService().getToken();
-    final userStr = await SecureStorageService().getUser();
-    if (userToken == null || userToken.isEmpty || userStr == null || userStr.isEmpty) {
+    // 1. Cross-isolate safe session check via SharedPreferences (avoids platform channel hang/crash)
+    String userToken = '';
+    String userStr = '';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      userToken = prefs.getString('chatspace_token') ?? '';
+      userStr = prefs.getString('chatspace_user') ?? '';
+    } catch (e) {
+      if (kDebugMode) print('[FCM] SharedPreferences session check error: $e');
+    }
+
+    // Fallback check to SecureStorageService if SharedPreferences was not yet populated
+    if (userToken.isEmpty || userStr.isEmpty) {
+      try {
+        userToken = await SecureStorageService().getToken() ?? '';
+        userStr = await SecureStorageService().getUser() ?? '';
+      } catch (_) {}
+    }
+
+    if (userToken.isEmpty || userStr.isEmpty) {
       if (kDebugMode) print('[FCM] Dropping background message: user is logged out');
       return;
     }
@@ -140,6 +159,29 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // A. Pre-Cache Storage Path and Session State on Main App Launch
+  // (Bypasses path_provider & SecureStorage platform channel limitations in background isolates)
+  try {
+    final appDir = await getApplicationDocumentsDirectory();
+    final cachePath = '${appDir.path}/chatspace_offline_cache';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(LocalStorageService.cacheDirPrefKey, cachePath);
+
+    // Sync active credentials to SharedPreferences so background isolates can inspect session safely
+    final secureStorage = SecureStorageService();
+    final token = await secureStorage.getToken();
+    final userStr = await secureStorage.getUser();
+    if (token != null && token.isNotEmpty) {
+      await prefs.setString('chatspace_token', token);
+    }
+    if (userStr != null && userStr.isNotEmpty) {
+      await prefs.setString('chatspace_user', userStr);
+    }
+  } catch (e) {
+    if (kDebugMode) print('[Main] Pre-cache setup error: $e');
+  }
+
   // Register top-level background handler with Firebase Messaging
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   // Pre-initialize offline storage engine connection

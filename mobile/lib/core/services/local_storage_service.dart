@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/message_model.dart';
 import '../../data/models/user_model.dart';
@@ -10,6 +11,8 @@ import '../../data/models/user_model.dart';
 /// Caches user contacts and conversation messages on-device
 /// so they can be viewed when mobile data or Wi-Fi is turned off.
 class LocalStorageService {
+  static const String cacheDirPrefKey = 'chatspace_cache_dir_path';
+
   static final LocalStorageService _instance = LocalStorageService._internal();
   factory LocalStorageService() => _instance;
   LocalStorageService._internal();
@@ -22,29 +25,50 @@ class LocalStorageService {
   /// and when the app starts up.
   ///
   /// Guarantees:
-  /// 1. Establishes connection to the underlying offline cache/database files.
+  /// 1. Bypasses path_provider platform channels in background isolates by fetching
+  ///    the pre-cached path string from cross-isolate safe SharedPreferences.
   /// 2. If storage is already open (e.g. app in background or already initialized),
   ///    gracefully uses the existing open instance instead of crashing due to duplicate lock files.
-  /// 3. Ensures the cache directory exists and is ready for read/write in standalone isolates.
+  /// 3. Resilient fallback to system temp directory via dart:io if platform channels are unavailable.
   Future<void> initialize({String? customPath}) async {
     if (_initialized && _cacheDir != null && await _cacheDir!.exists()) {
       return;
     }
 
     try {
+      // 1. Explicit path passed directly
       if (customPath != null && customPath.trim().isNotEmpty) {
         final dir = Directory(customPath.trim());
         if (!await dir.exists()) {
           await dir.create(recursive: true);
         }
         _cacheDir = dir;
-      } else {
-        await _getCacheDirectory();
+        _initialized = true;
+        return;
       }
+
+      // 2. Cross-isolate safe path from SharedPreferences (avoids path_provider MissingPluginException in background isolate)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final cachedPath = prefs.getString(cacheDirPrefKey);
+        if (cachedPath != null && cachedPath.isNotEmpty) {
+          final dir = Directory(cachedPath);
+          if (!await dir.exists()) {
+            await dir.create(recursive: true);
+          }
+          _cacheDir = dir;
+          _initialized = true;
+          return;
+        }
+      } catch (_) {}
+
+      // 3. Main UI isolate path resolution via path_provider
+      await _getCacheDirectory();
       _initialized = true;
     } catch (_) {
+      // 4. Safe fallback mechanism: pure dart:io system temp (never throws MissingPluginException)
       try {
-        final tempDir = await getTemporaryDirectory();
+        final tempDir = Directory.systemTemp;
         final dir = Directory('${tempDir.path}/chatspace_offline_cache');
         if (!await dir.exists()) {
           await dir.create(recursive: true);
@@ -64,13 +88,45 @@ class LocalStorageService {
     if (_cacheDir != null && await _cacheDir!.exists()) {
       return _cacheDir!;
     }
-    final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory('${appDir.path}/chatspace_offline_cache');
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
+
+    // A. Check SharedPreferences for pre-cached path (isolate-safe)
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedPath = prefs.getString(cacheDirPrefKey);
+      if (cachedPath != null && cachedPath.isNotEmpty) {
+        final dir = Directory(cachedPath);
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        _cacheDir = dir;
+        return dir;
+      }
+    } catch (_) {}
+
+    // B. Query path_provider in main isolate
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final dir = Directory('${appDir.path}/chatspace_offline_cache');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      _cacheDir = dir;
+      // Persist path into SharedPreferences for headless background isolates
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(cacheDirPrefKey, dir.path);
+      } catch (_) {}
+      return dir;
+    } catch (_) {
+      // C. Pure dart:io fallback without platform channel dependency
+      final tempDir = Directory.systemTemp;
+      final dir = Directory('${tempDir.path}/chatspace_offline_cache');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      _cacheDir = dir;
+      return dir;
     }
-    _cacheDir = dir;
-    return dir;
   }
 
   /// Safely writes content to disk using an atomic temporary file swap.

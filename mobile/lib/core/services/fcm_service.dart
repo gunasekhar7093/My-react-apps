@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../firebase_options.dart';
 import '../../data/models/message_model.dart';
 import '../constants/api_constants.dart';
@@ -17,10 +18,26 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // 1. Session check: if user is logged out, drop background notification
-    final userToken = await SecureStorageService().getToken();
-    final userStr = await SecureStorageService().getUser();
-    if (userToken == null || userToken.isEmpty || userStr == null || userStr.isEmpty) {
+    // 1. Cross-isolate safe session check via SharedPreferences (avoids platform channel hang/crash)
+    String userToken = '';
+    String userStr = '';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      userToken = prefs.getString('chatspace_token') ?? '';
+      userStr = prefs.getString('chatspace_user') ?? '';
+    } catch (e) {
+      if (kDebugMode) print('[FCM] SharedPreferences session check error: $e');
+    }
+
+    // Fallback check to SecureStorageService if SharedPreferences was empty
+    if (userToken.isEmpty || userStr.isEmpty) {
+      try {
+        userToken = await SecureStorageService().getToken() ?? '';
+        userStr = await SecureStorageService().getUser() ?? '';
+      } catch (_) {}
+    }
+
+    if (userToken.isEmpty || userStr.isEmpty) {
       if (kDebugMode) print('[FCM] Dropping background message: user is logged out');
       return;
     }
