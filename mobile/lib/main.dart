@@ -35,36 +35,34 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // 1. Cross-isolate safe session check via SharedPreferences (avoids platform channel hang/crash)
-    String userToken = '';
-    String userStr = '';
+    // 1. Secure cross-isolate session verification via SharedPreferences
+    // (Checks chatspace_active_uid without exposing sensitive bearer API tokens in plaintext)
+    String activeUid = '';
     try {
       final prefs = await SharedPreferences.getInstance();
-      userToken = prefs.getString('chatspace_token') ?? '';
-      userStr = prefs.getString('chatspace_user') ?? '';
+      activeUid = prefs.getString(SecureStorageService.activeUidPrefKey) ?? '';
     } catch (e) {
-      if (kDebugMode) print('[FCM] SharedPreferences session check error: $e');
+      if (kDebugMode) print('[FCM] SharedPreferences activeUid check error: $e');
     }
 
-    // Fallback check to SecureStorageService if SharedPreferences was not yet populated
-    if (userToken.isEmpty || userStr.isEmpty) {
+    // Fallback: if activeUid wasn't cached yet, attempt to read user profile from SecureStorage
+    if (activeUid.isEmpty) {
       try {
-        userToken = await SecureStorageService().getToken() ?? '';
-        userStr = await SecureStorageService().getUser() ?? '';
+        final userStr = await SecureStorageService().getUser();
+        if (userStr != null && userStr.isNotEmpty) {
+          final dynamic decoded = jsonDecode(userStr);
+          if (decoded is Map) {
+            activeUid = decoded['id']?.toString() ?? decoded['_id']?.toString() ?? '';
+          }
+        }
       } catch (_) {}
     }
 
-    if (userToken.isEmpty || userStr.isEmpty) {
-      if (kDebugMode) print('[FCM] Dropping background message: user is logged out');
+    if (activeUid.isEmpty) {
+      if (kDebugMode) print('[FCM] Dropping background message: user is logged out (no activeUid)');
       return;
     }
-
-    String currentUserId = '';
-    try {
-      final userData = jsonDecode(userStr);
-      currentUserId = userData['id']?.toString() ?? userData['_id']?.toString() ?? '';
-    } catch (_) {}
-    if (currentUserId.isEmpty) return;
+    final currentUserId = activeUid;
 
     // 2. Initialize Firebase in background isolate
     try {
@@ -83,6 +81,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     // 3. Parse incoming chat payload
     final senderId = data['senderId']?.toString() ?? '';
     final receiverId = data['receiverId']?.toString() ?? currentUserId;
+
+    // Verify recipient: ensure the incoming message was actually addressed to this active user
+    if (receiverId.isNotEmpty && receiverId != currentUserId) {
+      if (kDebugMode) {
+        print('[FCM] Dropping push: addressed to $receiverId but device user is $currentUserId');
+      }
+      return;
+    }
     final senderName = data['senderName']?.toString() ?? data['title']?.toString() ?? 'User';
     final text = data['text']?.toString() ?? data['body']?.toString() ?? data['preview']?.toString() ?? '';
     final messageId = data['messageId']?.toString() ?? message.messageId ?? 'msg_${DateTime.now().millisecondsSinceEpoch}';
@@ -168,16 +174,26 @@ void main() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(LocalStorageService.cacheDirPrefKey, cachePath);
 
-    // Sync active credentials to SharedPreferences so background isolates can inspect session safely
+    // Extract user ID from SecureStore and save as chatspace_active_uid in SharedPreferences
     final secureStorage = SecureStorageService();
-    final token = await secureStorage.getToken();
     final userStr = await secureStorage.getUser();
-    if (token != null && token.isNotEmpty) {
-      await prefs.setString('chatspace_token', token);
-    }
     if (userStr != null && userStr.isNotEmpty) {
-      await prefs.setString('chatspace_user', userStr);
+      try {
+        final dynamic decoded = jsonDecode(userStr);
+        if (decoded is Map) {
+          final uid = decoded['id']?.toString() ?? decoded['_id']?.toString() ?? '';
+          if (uid.isNotEmpty) {
+            await prefs.setString(SecureStorageService.activeUidPrefKey, uid);
+          }
+        }
+      } catch (_) {}
+    } else {
+      await prefs.remove(SecureStorageService.activeUidPrefKey);
     }
+
+    // Security hardening: ensure no sensitive network bearer tokens remain in plaintext SharedPreferences
+    await prefs.remove('chatspace_token');
+    await prefs.remove('chatspace_user');
   } catch (e) {
     if (kDebugMode) print('[Main] Pre-cache setup error: $e');
   }
