@@ -1,8 +1,50 @@
+import 'dart:convert';
+
 enum MessageStatus {
   pending,   // Clock Icon (🕒): Queued locally on device, waiting for internet
   sent,      // One Gray Tick (✓): Sent to server, not yet reached recipient's device
   delivered, // Two Gray Ticks (✓✓): Delivered to recipient's device
   read,      // Two White Ticks (✓✓): Recipient has opened and read the message
+}
+
+class MessageReplyModel {
+  final String id;
+  final String text;
+  final String senderId;
+  final String senderName;
+  final String? mediaType;
+  final String? mediaUrl;
+
+  const MessageReplyModel({
+    required this.id,
+    required this.text,
+    required this.senderId,
+    required this.senderName,
+    this.mediaType,
+    this.mediaUrl,
+  });
+
+  factory MessageReplyModel.fromJson(Map<String, dynamic> json) {
+    return MessageReplyModel(
+      id: json['id']?.toString() ?? '',
+      text: json['text']?.toString() ?? '',
+      senderId: json['senderId']?.toString() ?? '',
+      senderName: json['senderName']?.toString() ?? '',
+      mediaType: json['mediaType']?.toString(),
+      mediaUrl: json['mediaUrl']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'text': text,
+      'senderId': senderId,
+      'senderName': senderName,
+      'mediaType': ?mediaType,
+      'mediaUrl': ?mediaUrl,
+    };
+  }
 }
 
 class MessageModel {
@@ -20,6 +62,7 @@ class MessageModel {
   final int? mediaSize;
   final String? senderName;
   final bool isPending;
+  final MessageReplyModel? replyTo;
 
   const MessageModel({
     required this.id,
@@ -36,6 +79,7 @@ class MessageModel {
     this.mediaSize,
     this.senderName,
     this.isPending = false,
+    this.replyTo,
   });
 
   bool get isMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
@@ -53,6 +97,22 @@ class MessageModel {
       return MessageStatus.delivered;
     }
     return MessageStatus.sent;
+  }
+
+  static MessageReplyModel? _parseReplyTo(dynamic val) {
+    if (val == null) return null;
+    if (val is Map) {
+      return MessageReplyModel.fromJson(Map<String, dynamic>.from(val));
+    }
+    if (val is String && val.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(val);
+        if (decoded is Map) {
+          return MessageReplyModel.fromJson(Map<String, dynamic>.from(decoded));
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   factory MessageModel.fromJson(Map<String, dynamic> json) {
@@ -73,6 +133,7 @@ class MessageModel {
       mediaSize: json['mediaSize'] is int
           ? json['mediaSize'] as int
           : int.tryParse(json['mediaSize']?.toString() ?? ''),
+      replyTo: _parseReplyTo(json['replyTo']),
     );
   }
 
@@ -92,6 +153,7 @@ class MessageModel {
       'mediaSize': ?mediaSize,
       'senderName': ?senderName,
       'isPending': isPending,
+      'replyTo': ?replyTo?.toJson(),
     };
   }
 
@@ -110,6 +172,7 @@ class MessageModel {
     int? mediaSize,
     String? senderName,
     bool? isPending,
+    MessageReplyModel? replyTo,
   }) {
     return MessageModel(
       id: id ?? this.id,
@@ -126,6 +189,7 @@ class MessageModel {
       mediaSize: mediaSize ?? this.mediaSize,
       senderName: senderName ?? this.senderName,
       isPending: isPending ?? this.isPending,
+      replyTo: replyTo ?? this.replyTo,
     );
   }
 }

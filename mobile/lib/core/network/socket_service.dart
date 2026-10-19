@@ -305,6 +305,7 @@ class SocketService {
     String? mediaType,
     String? mediaName,
     int? mediaSize,
+    Map<String, dynamic>? replyTo,
   }) async {
     final socket = _socket;
     if (socket == null || socket.connected != true) {
@@ -324,6 +325,7 @@ class SocketService {
         if (mediaType != null) 'mediaType': mediaType,
         if (mediaName != null) 'mediaName': mediaName,
         if (mediaSize != null) 'mediaSize': mediaSize,
+        if (replyTo != null) 'replyTo': replyTo,
       },
       ack: (data) {
         if (!completer.isCompleted) {

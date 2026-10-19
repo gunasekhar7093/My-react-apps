@@ -1054,6 +1054,21 @@ io.on('connection', async (socket) => {
       const messageCreatedAt = clientCreatedAt || now
       const deliveredAt = isReceiverOnline ? now : null
 
+      let replyTo = null
+      if (payload?.replyTo && typeof payload.replyTo === 'object') {
+        const rId = typeof payload.replyTo.id === 'string' ? payload.replyTo.id.trim() : ''
+        if (rId) {
+          replyTo = {
+            id: rId,
+            text: typeof payload.replyTo.text === 'string' ? payload.replyTo.text.slice(0, 500) : '',
+            senderId: typeof payload.replyTo.senderId === 'string' ? payload.replyTo.senderId : '',
+            senderName: typeof payload.replyTo.senderName === 'string' ? payload.replyTo.senderName : '',
+            mediaType: typeof payload.replyTo.mediaType === 'string' ? payload.replyTo.mediaType : null,
+            mediaUrl: typeof payload.replyTo.mediaUrl === 'string' ? payload.replyTo.mediaUrl : null,
+          }
+        }
+      }
+
       const message = {
         id: 'm' + Date.now() + randomBytes(6).toString('hex'),
         clientTempId,
@@ -1065,6 +1080,7 @@ io.on('connection', async (socket) => {
         mediaType,
         mediaName,
         mediaSize,
+        replyTo,
         createdAt: messageCreatedAt,
         deliveredAt,
         readAt: null,
@@ -1155,6 +1171,7 @@ io.on('connection', async (socket) => {
             mediaSize: String(message.mediaSize || 0),
             unreadCount: String(unreadCount),
             unreadLines: JSON.stringify(unreadLines),
+            replyTo: replyTo ? JSON.stringify(replyTo) : '',
             type: 'chat_message',
           },
           android: {

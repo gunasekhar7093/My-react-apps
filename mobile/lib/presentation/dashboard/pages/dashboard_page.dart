@@ -194,6 +194,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             mediaType: pending.mediaType,
             mediaName: pending.mediaName,
             mediaSize: pending.mediaSize,
+            replyTo: pending.replyTo?.toJson(),
           );
           final confirmedRaw = res['message'];
           if (confirmedRaw is Map) {

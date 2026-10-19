@@ -1,3 +1,5 @@
+import '../../../data/models/message_model.dart';
+
 abstract class ChatEvent {
   const ChatEvent();
 }
@@ -17,6 +19,7 @@ class ChatMessageSendRequested extends ChatEvent {
   final String? mediaType;
   final String? mediaName;
   final int? mediaSize;
+  final MessageReplyModel? replyTo;
 
   const ChatMessageSendRequested(
     this.text, {
@@ -24,6 +27,7 @@ class ChatMessageSendRequested extends ChatEvent {
     this.mediaType,
     this.mediaName,
     this.mediaSize,
+    this.replyTo,
   });
 }
 

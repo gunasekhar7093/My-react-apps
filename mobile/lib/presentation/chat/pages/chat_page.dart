@@ -54,6 +54,9 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
   String? _token;
   String? _currentUserName;
+  MessageModel? _replyToMessage;
+  String? _highlightedMessageId;
+  final Map<String, GlobalKey> _messageKeys = {};
   /// Live-updated version of the chat partner (status changes update this)
   late UserModel _chatUser;
 
@@ -237,9 +240,189 @@ class _ChatPageState extends State<ChatPage> {
   void _send() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    _bloc.add(ChatMessageSendRequested(text));
+
+    final replyToModel = _replyToMessage != null
+        ? MessageReplyModel(
+            id: _replyToMessage!.id,
+            text: _getSnippet(_replyToMessage!),
+            senderId: _replyToMessage!.senderId,
+            senderName: _replyToMessage!.senderId == widget.currentUserId
+                ? 'You'
+                : (_replyToMessage!.senderName ?? widget.user.name),
+            mediaType: _replyToMessage!.mediaType,
+            mediaUrl: _replyToMessage!.mediaUrl,
+          )
+        : null;
+
+    _bloc.add(ChatMessageSendRequested(text, replyTo: replyToModel));
     _controller.clear();
+    setState(() {
+      _replyToMessage = null;
+    });
     _scrollToBottom();
+  }
+
+  void _setReplyMessage(MessageModel message) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _replyToMessage = message;
+    });
+    _inputFocusNode.requestFocus();
+  }
+
+  String _getSnippet(MessageModel m) {
+    if (m.text.isNotEmpty) return m.text;
+    if (m.isImage) return 'Photo';
+    if (m.isVideo) return 'Video';
+    if (m.isMedia) return m.mediaName ?? 'Attachment';
+    return 'Message';
+  }
+
+  Future<void> _scrollToMessage(String targetId, List<MessageModel> messages) async {
+    final index = messages.indexWhere((m) => m.id == targetId || m.clientTempId == targetId);
+    if (index == -1) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Original message not found or deleted'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final reverseIndex = messages.length - 1 - index;
+    final key = _messageKeys[targetId];
+
+    if (key?.currentContext != null) {
+      Scrollable.ensureVisible(
+        key!.currentContext!,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOutCubic,
+        alignment: 0.5,
+      );
+    } else {
+      final estimatedOffset = (reverseIndex * 70.0).clamp(0.0, _scrollController.position.maxScrollExtent);
+      await _scrollController.animateTo(
+        estimatedOffset,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOutCubic,
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final keyAfter = _messageKeys[targetId];
+        if (keyAfter?.currentContext != null) {
+          Scrollable.ensureVisible(
+            keyAfter!.currentContext!,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOutCubic,
+            alignment: 0.5,
+          );
+        }
+      });
+    }
+
+    setState(() {
+      _highlightedMessageId = targetId;
+    });
+
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted && _highlightedMessageId == targetId) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
+      }
+    });
+  }
+
+  Widget _buildReplyPreviewBar(ThemeData theme) {
+    if (_replyToMessage == null) return const SizedBox.shrink();
+    final reply = _replyToMessage!;
+    final isMine = reply.senderId == widget.currentUserId;
+    final displayName = isMine ? 'You' : (reply.senderName?.isNotEmpty == true ? reply.senderName! : widget.user.name);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E2433) : const Color(0xFFF1F3F8),
+        borderRadius: BorderRadius.circular(14),
+        border: const Border(
+          left: BorderSide(
+            color: AppTheme.primaryColor,
+            width: 4,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          if (reply.isMedia) ...[
+            Container(
+              padding: const EdgeInsets.all(5),
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Icon(
+                reply.isImage
+                    ? Icons.photo_rounded
+                    : (reply.isVideo ? Icons.videocam_rounded : Icons.insert_drive_file_rounded),
+                size: 18,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Replying to $displayName',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12.5,
+                    color: AppTheme.primaryColor,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _getSnippet(reply),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 18),
+            tooltip: 'Cancel reply',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            onPressed: () {
+              setState(() {
+                _replyToMessage = null;
+              });
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showMessageActionMenu(MessageModel message) async {
@@ -278,6 +461,27 @@ class _ChatPageState extends State<ChatPage> {
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(2),
                   ),
+                ),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.reply_rounded, color: AppTheme.accentColor, size: 20),
+                  ),
+                  title: Text(
+                    'Reply',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop('reply');
+                  },
                 ),
                 if (canCopy)
                   ListTile(
@@ -334,7 +538,10 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     } finally {
-      if (selectedAction == 'unsend') {
+      if (selectedAction == 'reply') {
+        _inputFocusNode.canRequestFocus = true;
+        _setReplyMessage(message);
+      } else if (selectedAction == 'unsend') {
         await _showUnsendConfirmationDialog(message);
       } else {
         _inputFocusNode.unfocus();
@@ -716,6 +923,19 @@ class _ChatPageState extends State<ChatPage> {
                                         MediaCacheService().cacheBytes(fullUrl, bytes);
                                       }
 
+                                      final replyToModel = _replyToMessage != null
+                                          ? MessageReplyModel(
+                                              id: _replyToMessage!.id,
+                                              text: _getSnippet(_replyToMessage!),
+                                              senderId: _replyToMessage!.senderId,
+                                              senderName: _replyToMessage!.senderId == widget.currentUserId
+                                                  ? 'You'
+                                                  : (_replyToMessage!.senderName ?? widget.user.name),
+                                              mediaType: _replyToMessage!.mediaType,
+                                              mediaUrl: _replyToMessage!.mediaUrl,
+                                            )
+                                          : null;
+
                                       _bloc.add(
                                         ChatMessageSendRequested(
                                           captionController.text.trim(),
@@ -723,8 +943,10 @@ class _ChatPageState extends State<ChatPage> {
                                           mediaType: uploadRes['mediaType']?.toString() ?? (isVideo ? 'video' : 'image'),
                                           mediaName: uploadRes['mediaName']?.toString() ?? file.name,
                                           mediaSize: uploadRes['mediaSize'] is int ? uploadRes['mediaSize'] as int : bytes.length,
+                                          replyTo: replyToModel,
                                         ),
                                       );
+                                      setState(() => _replyToMessage = null);
                                       _scrollToBottom();
                                     } catch (err) {
                                       setModalState(() {
@@ -777,7 +999,17 @@ class _ChatPageState extends State<ChatPage> {
 
     return BlocProvider.value(
       value: _bloc,
-      child: Scaffold(
+      child: PopScope(
+        canPop: _replyToMessage == null,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          if (_replyToMessage != null) {
+            setState(() {
+              _replyToMessage = null;
+            });
+          }
+        },
+        child: Scaffold(
         appBar: AppBar(
           titleSpacing: 0,
           leading: IconButton(
@@ -1001,14 +1233,20 @@ class _ChatPageState extends State<ChatPage> {
                               children: [
                                 if (showDateHeader)
                                   _DateBadge(dateString: current.createdAt),
-                                _Bubble(
-                                  message: current,
-                                  time: _time(current.createdAt),
-                                  mine: isMine,
-                                  token: _token,
-                                  senderName: senderName,
-                                  avatarInitial: avatarInitial,
-                                  onLongPress: () => _showMessageActionMenu(current),
+                                _SwipeToReply(
+                                  onReply: () => _setReplyMessage(current),
+                                  child: _Bubble(
+                                    key: _messageKeys.putIfAbsent(current.id, () => GlobalKey()),
+                                    message: current,
+                                    time: _time(current.createdAt),
+                                    mine: isMine,
+                                    token: _token,
+                                    senderName: senderName,
+                                    avatarInitial: avatarInitial,
+                                    isHighlighted: _highlightedMessageId == current.id || _highlightedMessageId == current.clientTempId,
+                                    onLongPress: () => _showMessageActionMenu(current),
+                                    onQuotedMessageTap: (quotedId) => _scrollToMessage(quotedId, state.messages),
+                                  ),
                                 ),
                               ],
                             );
@@ -1020,8 +1258,13 @@ class _ChatPageState extends State<ChatPage> {
                 // Floating Input Dock
                 SafeArea(
                   top: false,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 16, 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_replyToMessage != null)
+                        _buildReplyPreviewBar(theme),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 16, 12),
                     decoration: BoxDecoration(
                       color: theme.scaffoldBackgroundColor,
                       border: Border(
@@ -1120,11 +1363,14 @@ class _ChatPageState extends State<ChatPage> {
                       ],
                     ),
                   ),
+                  ],
+                ),
                 ),
               ],
             );
           },
         ),
+      ),
       ),
     );
   }
@@ -1309,6 +1555,143 @@ class _DateBadge extends StatelessWidget {
   }
 }
 
+class _SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onReply;
+
+  const _SwipeToReply({
+    required this.child,
+    required this.onReply,
+  });
+
+  @override
+  State<_SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<_SwipeToReply> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late Animation<double> _animation;
+  double _dragOffset = 0.0;
+  bool _hasHapticTriggered = false;
+  static const double _replyThreshold = 48.0;
+  static const double _maxDragOffset = 72.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    )..addListener(() {
+        setState(() {
+          _dragOffset = _animation.value;
+        });
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (details.primaryDelta == null) return;
+    final newOffset = _dragOffset + details.primaryDelta!;
+    if (newOffset < 0) {
+      if (_dragOffset > 0) {
+        setState(() => _dragOffset = 0.0);
+      }
+      return;
+    }
+
+    setState(() {
+      _dragOffset = newOffset.clamp(0.0, _maxDragOffset);
+    });
+
+    if (_dragOffset >= _replyThreshold && !_hasHapticTriggered) {
+      HapticFeedback.lightImpact();
+      _hasHapticTriggered = true;
+    } else if (_dragOffset < _replyThreshold && _hasHapticTriggered) {
+      _hasHapticTriggered = false;
+    }
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    final reached = _dragOffset >= _replyThreshold;
+    if (reached) {
+      widget.onReply();
+    }
+    _hasHapticTriggered = false;
+    _runResetAnimation();
+  }
+
+  void _onHorizontalDragCancel() {
+    _hasHapticTriggered = false;
+    _runResetAnimation();
+  }
+
+  void _runResetAnimation() {
+    _animation = Tween<double>(begin: _dragOffset, end: 0.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+    _controller.forward(from: 0.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_dragOffset / _replyThreshold).clamp(0.0, 1.0);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: _onHorizontalDragUpdate,
+      onHorizontalDragEnd: _onHorizontalDragEnd,
+      onHorizontalDragCancel: _onHorizontalDragCancel,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.centerLeft,
+        children: [
+          Positioned(
+            left: (_dragOffset * 0.45) - 16,
+            child: Opacity(
+              opacity: progress,
+              child: Transform.scale(
+                scale: 0.5 + (0.5 * progress),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.85),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.3),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.reply_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Transform.translate(
+            offset: Offset(_dragOffset, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Bubble extends StatelessWidget {
   final MessageModel message;
   final String time;
@@ -1316,16 +1699,21 @@ class _Bubble extends StatelessWidget {
   final String? token;
   final String senderName;
   final String? avatarInitial;
+  final bool isHighlighted;
   final VoidCallback? onLongPress;
+  final ValueChanged<String>? onQuotedMessageTap;
 
   const _Bubble({
+    super.key,
     required this.message,
     required this.time,
     required this.mine,
     this.token,
     required this.senderName,
     this.avatarInitial,
+    this.isHighlighted = false,
     this.onLongPress,
+    this.onQuotedMessageTap,
   });
 
   @override Widget build(BuildContext context) {
@@ -1377,15 +1765,26 @@ class _Bubble extends StatelessWidget {
             bottomLeft: Radius.circular(mine ? 16 : 4),
             bottomRight: Radius.circular(mine ? 4 : 16),
           ),
-          border: mine
-              ? null
-              : Border.all(
-                  color: theme.brightness == Brightness.dark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : const Color(0xFFE6E8EE),
-                  width: 1,
-                ),
+          border: isHighlighted
+              ? Border.all(
+                  color: AppTheme.accentColor,
+                  width: 2.2,
+                )
+              : (mine
+                  ? null
+                  : Border.all(
+                      color: theme.brightness == Brightness.dark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : const Color(0xFFE6E8EE),
+                      width: 1,
+                    )),
           boxShadow: [
+            if (isHighlighted)
+              BoxShadow(
+                color: AppTheme.accentColor.withValues(alpha: 0.6),
+                blurRadius: 14,
+                spreadRadius: 2,
+              ),
             BoxShadow(
               color: mine
                   ? AppTheme.primaryColor.withValues(alpha: 0.16)
@@ -1395,12 +1794,105 @@ class _Bubble extends StatelessWidget {
             ),
           ],
         ),
-        child: hasMedia
-            ? _buildMediaBubble(context, theme, fullMediaUrl)
-            : _buildTextBubble(context, theme, maxWidth - 24),
+        child: message.replyTo != null
+            ? Column(
+                crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildQuotedSection(context, theme, message.replyTo!),
+                  hasMedia
+                      ? _buildMediaBubble(context, theme, fullMediaUrl)
+                      : _buildTextBubble(context, theme, maxWidth - 24),
+                ],
+              )
+            : (hasMedia
+                ? _buildMediaBubble(context, theme, fullMediaUrl)
+                : _buildTextBubble(context, theme, maxWidth - 24)),
       ),
     ),
   );
+  }
+
+  Widget _buildQuotedSection(BuildContext context, ThemeData theme, MessageReplyModel reply) {
+    final isOutgoing = mine;
+    final barColor = isOutgoing ? Colors.white : AppTheme.primaryColor;
+    final bgColor = isOutgoing
+        ? Colors.black.withValues(alpha: 0.22)
+        : (theme.brightness == Brightness.dark
+            ? Colors.white.withValues(alpha: 0.08)
+            : const Color(0xFFF1F3F7));
+    final titleColor = isOutgoing ? Colors.white : AppTheme.primaryColor;
+    final bodyColor = isOutgoing ? Colors.white.withValues(alpha: 0.88) : theme.colorScheme.onSurfaceVariant;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (reply.id.isNotEmpty) {
+          onQuotedMessageTap?.call(reply.id);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border(
+            left: BorderSide(
+              color: barColor,
+              width: 3.5,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (reply.mediaType != null) ...[
+              Icon(
+                reply.mediaType == 'image'
+                    ? Icons.photo_rounded
+                    : (reply.mediaType == 'video' ? Icons.videocam_rounded : Icons.insert_drive_file_rounded),
+                size: 16,
+                color: titleColor,
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    reply.senderName.isNotEmpty ? reply.senderName : 'User',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      color: titleColor,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 1.5),
+                  Text(
+                    reply.text.isNotEmpty
+                        ? reply.text
+                        : (reply.mediaType == 'image'
+                            ? 'Photo'
+                            : (reply.mediaType == 'video' ? 'Video' : 'Attachment')),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: bodyColor,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildTextBubble(BuildContext context, ThemeData theme, double contentMaxWidth) {

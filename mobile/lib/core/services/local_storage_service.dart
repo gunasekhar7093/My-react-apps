@@ -472,19 +472,9 @@ class LocalStorageService {
       final updated = existing.map((m) {
         if (m.senderId == otherUserId && (m.readAt == null || m.readAt!.isEmpty)) {
           changed = true;
-          return MessageModel(
-            id: m.id,
-            senderId: m.senderId,
-            receiverId: m.receiverId,
-            text: m.text,
-            createdAt: m.createdAt,
+          return m.copyWith(
             deliveredAt: m.deliveredAt ?? readAt,
             readAt: readAt,
-            mediaUrl: m.mediaUrl,
-            mediaType: m.mediaType,
-            mediaName: m.mediaName,
-            mediaSize: m.mediaSize,
-            senderName: m.senderName,
           );
         }
         return m;
@@ -507,20 +497,7 @@ class LocalStorageService {
       final updated = existing.map((m) {
         if (idSet.contains(m.id) && (m.deliveredAt == null || m.deliveredAt!.isEmpty)) {
           changed = true;
-          return MessageModel(
-            id: m.id,
-            senderId: m.senderId,
-            receiverId: m.receiverId,
-            text: m.text,
-            createdAt: m.createdAt,
-            deliveredAt: deliveredAt,
-            readAt: m.readAt,
-            mediaUrl: m.mediaUrl,
-            mediaType: m.mediaType,
-            mediaName: m.mediaName,
-            mediaSize: m.mediaSize,
-            senderName: m.senderName,
-          );
+          return m.copyWith(deliveredAt: deliveredAt);
         }
         return m;
       }).toList();

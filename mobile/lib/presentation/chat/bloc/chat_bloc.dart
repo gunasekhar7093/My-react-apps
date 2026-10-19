@@ -255,6 +255,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       mediaType: event.mediaType,
       mediaName: event.mediaName,
       mediaSize: event.mediaSize,
+      replyTo: event.replyTo,
       isPending: !isOnline,
     );
 
@@ -299,6 +300,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         mediaType: event.mediaType,
         mediaName: event.mediaName,
         mediaSize: event.mediaSize,
+        replyTo: event.replyTo?.toJson(),
       );
       final confirmedRaw = res['message'];
       if (confirmedRaw is Map) {
@@ -377,6 +379,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
             mediaType: pending.mediaType,
             mediaName: pending.mediaName,
             mediaSize: pending.mediaSize,
+            replyTo: pending.replyTo?.toJson(),
           );
           final confirmedRaw = res['message'];
           if (confirmedRaw is Map) {
