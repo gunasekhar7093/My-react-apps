@@ -31,12 +31,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   late final DashboardBloc _bloc;
   late final SocketService _socket;
   final _search = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   final _apiClient = ApiClient();
   DashboardFilter _currentFilter = DashboardFilter.all;
 
   @override void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _searchFocusNode.addListener(_onSearchFocusChanged);
     _bloc = DashboardBloc(repository: UserRepository())..add(const DashboardStarted());
     _socket = SocketService();
     PresenceConnectionService().initialize(_socket);
@@ -63,6 +65,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     );
     FcmService().registerDeviceToken();
     _connectSocket();
+  }
+
+  void _onSearchFocusChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onPresenceRestored() async {
@@ -306,6 +312,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _openChat(UserModel user, String currentUserId) async {
+    // Proactively unfocus search bar before opening chat so Flutter route focus manager
+    // does not restore focus and pop up the keyboard when returning to the dashboard.
+    _searchFocusNode.unfocus();
+    FocusScope.of(context).unfocus();
+
     // If a chat is already open (e.g. tapping banner to switch conversations), pop it first
     if (_bloc.state.openChatUserId != null) {
       Navigator.of(context).popUntil((route) => route.isFirst);
@@ -329,9 +340,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         ),
       ),
     );
-    // Chat closed — re-enable notifications and refresh user list
+    // Chat closed — re-enable notifications, unfocus search bar, and refresh user list
     NotificationService().openChatUserId = null;
     if (mounted) {
+      _searchFocusNode.unfocus();
+      FocusScope.of(context).unfocus();
       _bloc
         ..add(const DashboardOpenChatChanged(null))
         ..add(const DashboardUsersRefreshRequested());
@@ -368,6 +381,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   @override void dispose() {
+    _searchFocusNode.removeListener(_onSearchFocusChanged);
+    _searchFocusNode.dispose();
     WidgetsBinding.instance.removeObserver(this);
     PresenceConnectionService().reconnectCounter.removeListener(_onPresenceRestored);
     _search.dispose();
@@ -382,6 +397,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final initial = me?.name.isNotEmpty == true ? me!.name[0].toUpperCase() : '?';
     final myGradient = AppTheme.getAvatarGradient(me?.id ?? me?.name ?? '');
 
+    final canPopScope = !_searchFocusNode.hasFocus && _search.text.isEmpty;
+
     return BlocProvider.value(
       value: _bloc,
       child: BlocListener<DashboardBloc, DashboardState>(
@@ -390,7 +407,20 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         listener: (context, state) {
           _preSyncRecentConversations();
         },
-        child: Scaffold(
+        child: PopScope(
+          canPop: canPopScope,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            if (_searchFocusNode.hasFocus) {
+              _searchFocusNode.unfocus();
+            }
+            if (_search.text.isNotEmpty) {
+              _search.clear();
+              context.read<DashboardBloc>().add(const DashboardSearchChanged(''));
+            }
+            setState(() {});
+          },
+          child: Scaffold(
         appBar: AppBar(
           title: Row(
             children: [
@@ -454,9 +484,24 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 context.read<DashboardBloc>().add(const DashboardUsersRefreshRequested());
                 await Future<void>.delayed(const Duration(milliseconds: 300));
               },
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {
+                  if (_searchFocusNode.hasFocus) {
+                    _searchFocusNode.unfocus();
+                  }
+                },
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollStartNotification && _searchFocusNode.hasFocus) {
+                      _searchFocusNode.unfocus();
+                    }
+                    return false;
+                  },
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                    slivers: [
                   // Header Bar & Search Box
                   SliverToBoxAdapter(
                     child: Padding(
@@ -511,7 +556,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           // Search Bar
                           TextField(
                             controller: _search,
-                            onChanged: (q) => context.read<DashboardBloc>().add(DashboardSearchChanged(q)),
+                            focusNode: _searchFocusNode,
+                            onChanged: (q) {
+                              setState(() {});
+                              context.read<DashboardBloc>().add(DashboardSearchChanged(q));
+                            },
                             decoration: InputDecoration(
                               hintText: 'Search people by name...',
                               prefixIcon: const Icon(Icons.search_rounded, size: 22),
@@ -521,7 +570,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                                       icon: const Icon(Icons.close_rounded, size: 20),
                                       onPressed: () {
                                         _search.clear();
+                                        _searchFocusNode.unfocus();
                                         context.read<DashboardBloc>().add(const DashboardSearchChanged(''));
+                                        setState(() {});
                                       },
                                     ),
                             ),
@@ -672,11 +723,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     ),
                 ],
               ),
-            );
-          },
-        ),
-      ),
-      ),
+            ),
+          ),
+        );
+      },
+    ),
+    ),
+    ),
+    ),
     );
   }
 }
