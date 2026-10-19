@@ -688,28 +688,6 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
       }
     }
 
-    if (!before) {
-      const now = new Date().toISOString()
-      const markResult = await messagesCollection.updateMany(
-        {
-          senderId: otherUserId,
-          receiverId: userId,
-          $or: [
-            { readAt: null },
-            { readAt: { $exists: false } },
-          ],
-        },
-        { $set: { readAt: now, deliveredAt: now, status: 'read' } },
-      )
-      if (markResult.modifiedCount > 0) {
-        io.to(otherUserId).emit('messages:read', {
-          readerId: userId,
-          conversationWith: userId,
-          readAt: now,
-        })
-      }
-    }
-
     const conversation = await messagesCollection
       .find(filter)
       .sort({ createdAt: -1 })

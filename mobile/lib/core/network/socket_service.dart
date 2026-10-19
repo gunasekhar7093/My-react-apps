@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
@@ -46,6 +47,9 @@ class SocketService {
   final List<MessagesDeliveredCallback> _extraMessagesDeliveredCallbacks = [];
   final List<MessageDeletedCallback> _extraMessageDeletedCallbacks = [];
   final List<SocketConnectionCallback> _extraConnectCallbacks = [];
+  final List<SocketConnectionCallback> _extraDisconnectCallbacks = [];
+
+  final ValueNotifier<bool> isConnectedNotifier = ValueNotifier<bool>(false);
 
   SocketService({SecureStorageService? storage})
       : storage = storage ?? SecureStorageService();
@@ -91,18 +95,26 @@ class SocketService {
     final socket = _socket!;
     socket
       ..onConnect((_) {
+        isConnectedNotifier.value = true;
         onConnected?.call();
         for (final cb in List.of(_extraConnectCallbacks)) {
           cb();
         }
       })
       ..onConnectError((data) {
+        isConnectedNotifier.value = false;
         onError?.call(data?.toString() ?? 'Socket connection failed.');
       })
       ..onError((data) {
+        isConnectedNotifier.value = false;
         onError?.call(data?.toString() ?? 'Socket error.');
       })
-      ..onDisconnect((_) {})
+      ..onDisconnect((_) {
+        isConnectedNotifier.value = false;
+        for (final cb in List.of(_extraDisconnectCallbacks)) {
+          cb();
+        }
+      })
       ..on('user:status', (data) {
         if (data is! Map) return;
         final userId = data['userId']?.toString();
@@ -337,6 +349,18 @@ class SocketService {
     return response;
   }
 
+  void addOnDisconnect(SocketConnectionCallback callback) {
+    _extraDisconnectCallbacks.add(callback);
+  }
+
+  void removeOnDisconnect([SocketConnectionCallback? callback]) {
+    if (callback != null) {
+      _extraDisconnectCallbacks.remove(callback);
+    } else {
+      _extraDisconnectCallbacks.clear();
+    }
+  }
+
   void disconnect() {
     _extraMessageCallbacks.clear();
     _extraStatusCallbacks.clear();
@@ -344,9 +368,11 @@ class SocketService {
     _extraMessagesDeliveredCallbacks.clear();
     _extraMessageDeletedCallbacks.clear();
     _extraConnectCallbacks.clear();
+    _extraDisconnectCallbacks.clear();
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;
+    isConnectedNotifier.value = false;
   }
 }
 

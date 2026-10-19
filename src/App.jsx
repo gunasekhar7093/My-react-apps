@@ -496,6 +496,7 @@ function App() {
             [conversationId]: freshMessages,
           }))
           setChatLoading(false)
+          socketRef.current?.emit('messages:read', { senderId: conversationId })
         }
       } catch {
         if (!cancelled && requestId === conversationRequestRef.current) {

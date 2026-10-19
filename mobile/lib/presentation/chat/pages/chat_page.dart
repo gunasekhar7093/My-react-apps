@@ -22,6 +22,8 @@ import '../bloc/chat_state.dart';
 import '../widgets/cached_media_image.dart';
 import '../widgets/media_viewers.dart';
 import '../../../core/services/media_cache_service.dart';
+import '../../../core/services/presence_connection_service.dart';
+import '../../../data/repositories/user_repository.dart';
 
 class ChatPage extends StatefulWidget {
   final UserModel user;
@@ -81,8 +83,27 @@ class _ChatPageState extends State<ChatPage> {
       userId: widget.currentUserId,
       otherUserId: widget.user.id,
     )..add(const ChatStarted());
+    PresenceConnectionService().reconnectCounter.addListener(_onPresenceRestored);
     _scrollController.addListener(_onScroll);
     _registerSocketCallbacks();
+  }
+
+  void _onPresenceRestored() {
+    _refreshChatUserStatus();
+  }
+
+  void _refreshChatUserStatus() {
+    UserRepository().getUsers().then((users) {
+      if (!mounted) return;
+      for (final u in users) {
+        if (u.id == widget.user.id) {
+          setState(() {
+            _chatUser = u;
+          });
+          break;
+        }
+      }
+    }).catchError((_) {});
   }
 
   void _onScroll() {
@@ -196,6 +217,7 @@ class _ChatPageState extends State<ChatPage> {
 
   @override void dispose() {
     _scrollController.removeListener(_onScroll);
+    PresenceConnectionService().reconnectCounter.removeListener(_onPresenceRestored);
     _controller.dispose();
     _scrollController.dispose();
     // Remove our callbacks from the shared socket but DO NOT disconnect it —
@@ -675,8 +697,6 @@ class _ChatPageState extends State<ChatPage> {
 
   @override Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Use _chatUser (updated in real-time by socket) instead of immutable widget.user
-    final isOnline = _chatUser.status == 'online';
     final initial = _chatUser.name.isNotEmpty ? _chatUser.name[0].toUpperCase() : '?';
     final gradient = AppTheme.getAvatarGradient(_chatUser.id.isNotEmpty ? _chatUser.id : _chatUser.name);
 
@@ -689,94 +709,104 @@ class _ChatPageState extends State<ChatPage> {
             icon: const Icon(Icons.arrow_back_rounded),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          title: Row(
-            children: [
-              // Hero Avatar with Live Online Dot
-              Stack(
-                clipBehavior: Clip.none,
+          title: ValueListenableBuilder<bool>(
+            valueListenable: PresenceConnectionService().isPresenceLiveNotifier,
+            builder: (context, isPresenceLive, _) {
+              final isOnline = isPresenceLive && _chatUser.status == 'online';
+
+              return Row(
                 children: [
-                  Hero(
-                    tag: 'avatar_${widget.user.id}',
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(colors: gradient),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text(
-                          initial,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
+                  // Hero Avatar with Live Online Dot
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Hero(
+                        tag: 'avatar_${widget.user.id}',
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(colors: gradient),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              initial,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  Positioned(
-                    right: -1,
-                    bottom: -1,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: isOnline ? AppTheme.onlineColor : AppTheme.offlineColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: theme.scaffoldBackgroundColor, width: 2),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              // Name and Presence
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.user.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                    ),
-                    Row(
-                      children: [
-                        if (isOnline) ...[
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              color: AppTheme.onlineColor,
+                      if (isPresenceLive)
+                        Positioned(
+                          right: -1,
+                          bottom: -1,
+                          child: Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: isOnline ? AppTheme.onlineColor : AppTheme.offlineColor,
                               shape: BoxShape.circle,
+                              border: Border.all(color: theme.scaffoldBackgroundColor, width: 2),
                             ),
                           ),
-                          const SizedBox(width: 5),
-                          const Text(
-                            'Online',
-                            style: TextStyle(
-                              color: AppTheme.onlineColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ] else
-                          Text(
-                            _lastSeen(widget.user.lastSeenAt),
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant,
-                              fontSize: 12,
-                            ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(width: 12),
+                  // Name and Presence
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _chatUser.name.isNotEmpty ? _chatUser.name : widget.user.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                        ),
+                        if (isPresenceLive)
+                          Row(
+                            children: [
+                              if (isOnline) ...[
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: AppTheme.onlineColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                const Text(
+                                  'Online',
+                                  style: TextStyle(
+                                    color: AppTheme.onlineColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ] else
+                                Text(
+                                  _lastSeen(_chatUser.lastSeenAt),
+                                  style: TextStyle(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
                           ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+                ],
+              );
+            },
           ),
         ),
         body: BlocConsumer<ChatBloc, ChatState>(

@@ -7,6 +7,7 @@ import '../../../core/network/socket_service.dart';
 import '../../../core/services/fcm_service.dart';
 import '../../../core/services/local_storage_service.dart';
 import '../../../core/services/notification_service.dart';
+import '../../../core/services/presence_connection_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/message_model.dart';
 import '../../../data/models/user_model.dart';
@@ -38,6 +39,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     _bloc = DashboardBloc(repository: UserRepository())..add(const DashboardStarted());
     _socket = SocketService();
+    PresenceConnectionService().initialize(_socket);
+    PresenceConnectionService().reconnectCounter.addListener(_onPresenceRestored);
     NotificationService().initialize(
       onSelectUser: (userId) {
         if (!mounted) return;
@@ -60,6 +63,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     );
     FcmService().registerDeviceToken();
     _connectSocket();
+  }
+
+  void _onPresenceRestored() {
+    if (mounted) {
+      _bloc.add(const DashboardUsersRefreshRequested());
+    }
   }
 
   /// Finds user in bloc list or constructs a fallback model
@@ -347,6 +356,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   @override void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PresenceConnectionService().reconnectCounter.removeListener(_onPresenceRestored);
     _search.dispose();
     _socket.disconnect();
     _bloc.close();
@@ -709,164 +719,174 @@ class _UserCard extends StatelessWidget {
 
   @override Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isOnline = user.status == 'online';
     final initial = user.name.isNotEmpty ? user.name[0].toUpperCase() : '?';
     final gradient = AppTheme.getAvatarGradient(user.id.isNotEmpty ? user.id : user.name);
 
-    return Material(
-      color: theme.cardTheme.color,
-      shape: theme.cardTheme.shape,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              // Avatar with Hero and Live Presence Indicator
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Hero(
-                    tag: 'avatar_${user.id}',
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: gradient,
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: gradient[0].withValues(alpha: 0.25),
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          initial,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: isOnline ? AppTheme.onlineColor : AppTheme.offlineColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: theme.scaffoldBackgroundColor,
-                          width: 2.5,
-                        ),
-                        boxShadow: isOnline
-                            ? [
-                                BoxShadow(
-                                  color: AppTheme.onlineColor.withValues(alpha: 0.45),
-                                  blurRadius: 4,
-                                ),
-                              ]
-                            : null,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 14),
+    return ValueListenableBuilder<bool>(
+      valueListenable: PresenceConnectionService().isPresenceLiveNotifier,
+      builder: (context, isPresenceLive, _) {
+        final isOnline = isPresenceLive && user.status == 'online';
 
-              // Contact Name & Status
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        if (isOnline) ...[
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              color: AppTheme.onlineColor,
-                              shape: BoxShape.circle,
+        return Material(
+          color: theme.cardTheme.color,
+          shape: theme.cardTheme.shape,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  // Avatar with Hero and Live Presence Indicator
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Hero(
+                        tag: 'avatar_${user.id}',
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: gradient,
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: gradient[0].withValues(alpha: 0.25),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 6),
-                          const Text(
-                            'Online now',
-                            style: TextStyle(
-                              color: AppTheme.onlineColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ] else
-                          Expanded(
+                          child: Center(
                             child: Text(
-                              _lastSeen(user.lastSeenAt),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurfaceVariant,
-                                fontSize: 12,
+                              initial,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
+                        ),
+                      ),
+                      if (isPresenceLive)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: isOnline ? AppTheme.onlineColor : AppTheme.offlineColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: theme.scaffoldBackgroundColor,
+                                width: 2.5,
+                              ),
+                              boxShadow: isOnline
+                                  ? [
+                                      BoxShadow(
+                                        color: AppTheme.onlineColor.withValues(alpha: 0.45),
+                                        blurRadius: 4,
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(width: 14),
+
+                  // Contact Name & Status
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          user.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        if (isPresenceLive) ...[
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              if (isOnline) ...[
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: AppTheme.onlineColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'Online now',
+                                  style: TextStyle(
+                                    color: AppTheme.onlineColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ] else
+                                Expanded(
+                                  child: Text(
+                                    _lastSeen(user.lastSeenAt),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
-                  ],
-                ),
-              ),
+                  ),
 
-              // Trailing unread badge & chevron
-              if (user.unreadCount > 0)
-                Container(
-                  margin: const EdgeInsets.only(right: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
-                    style: TextStyle(
-                      color: theme.colorScheme.onPrimary,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
+                  // Trailing unread badge & chevron
+                  if (user.unreadCount > 0)
+                    Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
+                        style: TextStyle(
+                          color: theme.colorScheme.onPrimary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                    size: 22,
                   ),
-                ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                size: 22,
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
