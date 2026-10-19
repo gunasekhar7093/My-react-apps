@@ -273,8 +273,7 @@ class LocalStorageService {
           .whereType<Map>()
           .map((item) => MessageModel.fromJson(Map<String, dynamic>.from(item)))
           .toList();
-      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return list;
+      return MessageModel.deduplicate(list);
     } catch (_) {
       return const [];
     }
@@ -382,8 +381,7 @@ class LocalStorageService {
         resultMap[m.id] = m;
       }
 
-      final finalMessages = resultMap.values.toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final finalMessages = MessageModel.deduplicate(resultMap.values);
 
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = finalMessages.map((m) => m.toJson()).toList();
@@ -394,15 +392,7 @@ class LocalStorageService {
   Future<void> saveMessages(String userId, String otherUserId, List<MessageModel> newMessages) async {
     try {
       final existing = await getMessages(userId, otherUserId);
-      final map = <String, MessageModel>{};
-      for (final m in existing) {
-        map[m.id] = m;
-      }
-      for (final m in newMessages) {
-        map[m.id] = m;
-      }
-      final merged = map.values.toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final merged = MessageModel.deduplicate([...existing, ...newMessages]);
 
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = merged.map((m) => m.toJson()).toList();
@@ -545,8 +535,7 @@ class LocalStorageService {
                 (m.senderId == otherUserId && m.receiverId == userId))
             .toList();
       }
-      filtered.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return filtered;
+      return MessageModel.deduplicate(filtered);
     } catch (_) {
       return const [];
     }
@@ -555,10 +544,7 @@ class LocalStorageService {
   Future<void> savePendingMessage(MessageModel message) async {
     try {
       final existing = await getPendingMessages();
-      final map = <String, MessageModel>{for (final m in existing) m.id: m};
-      map[message.id] = message;
-      final sortedList = map.values.toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final sortedList = MessageModel.deduplicate([...existing, message]);
       final file = await _getPendingQueueFile();
       final jsonList = sortedList.map((m) => m.toJson()).toList();
       await _safeWriteFile(file, jsonEncode(jsonList));
@@ -601,10 +587,10 @@ class LocalStorageService {
       if (!replaced.any((m) => m.id == confirmedMessage.id)) {
         replaced.add(confirmedMessage);
       }
-      replaced.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final sortedReplaced = MessageModel.deduplicate(replaced);
 
       final file = await _getMessagesFile(userId, otherUserId);
-      final jsonList = replaced.map((m) => m.toJson()).toList();
+      final jsonList = sortedReplaced.map((m) => m.toJson()).toList();
       await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }

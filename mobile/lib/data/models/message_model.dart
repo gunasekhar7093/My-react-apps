@@ -192,4 +192,63 @@ class MessageModel {
       replyTo: replyTo ?? this.replyTo,
     );
   }
+
+  /// Deduplicates a collection of messages.
+  /// - Strips redundant copies (matching `id` or matching `clientTempId` or `id == clientTempId`).
+  /// - Prefers confirmed/server messages over pending temporary messages.
+  /// - Prefers messages with read/delivered status over unacknowledged ones.
+  /// - Returns a list sorted chronologically by `createdAt`.
+  static List<MessageModel> deduplicate(Iterable<MessageModel> messages) {
+    if (messages.isEmpty) return const [];
+
+    final list = messages.toList();
+
+    // Sort so confirmed messages precede pending messages,
+    // ensuring confirmed messages claim their IDs and clientTempIds first!
+    list.sort((a, b) {
+      final aPending = a.isPending || a.id.startsWith('temp_');
+      final bPending = b.isPending || b.id.startsWith('temp_');
+      if (aPending != bPending) {
+        return aPending ? 1 : -1;
+      }
+      final aHasStatus = (a.readAt != null && a.readAt!.isNotEmpty) ||
+          (a.deliveredAt != null && a.deliveredAt!.isNotEmpty);
+      final bHasStatus = (b.readAt != null && b.readAt!.isNotEmpty) ||
+          (b.deliveredAt != null && b.deliveredAt!.isNotEmpty);
+      if (aHasStatus != bHasStatus) {
+        return aHasStatus ? -1 : 1;
+      }
+      return 0;
+    });
+
+    final seenIds = <String>{};
+    final result = <MessageModel>[];
+
+    for (final m in list) {
+      final id = m.id.trim();
+      final clientTempId = m.clientTempId?.trim();
+
+      final isDuplicateId = id.isNotEmpty && seenIds.contains(id);
+      final isDuplicateTempId = clientTempId != null &&
+          clientTempId.isNotEmpty &&
+          seenIds.contains(clientTempId);
+
+      if (isDuplicateId || isDuplicateTempId) {
+        continue;
+      }
+
+      if (id.isNotEmpty) {
+        seenIds.add(id);
+      }
+      if (clientTempId != null && clientTempId.isNotEmpty) {
+        seenIds.add(clientTempId);
+      }
+
+      result.add(m);
+    }
+
+    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return result;
+  }
 }
+

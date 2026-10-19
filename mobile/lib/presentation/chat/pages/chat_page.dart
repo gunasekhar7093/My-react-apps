@@ -1173,6 +1173,8 @@ class _ChatPageState extends State<ChatPage> {
               );
             }
 
+            final messages = MessageModel.deduplicate(state.messages);
+
             return Column(
               children: [
                 // Messages List View (reverse: true so latest messages appear at bottom without scrolling)
@@ -1184,7 +1186,7 @@ class _ChatPageState extends State<ChatPage> {
                         _inputFocusNode.unfocus();
                       }
                     },
-                    child: state.messages.isEmpty
+                    child: messages.isEmpty
                       ? Center(
                           child: Padding(
                             padding: const EdgeInsets.all(32),
@@ -1224,9 +1226,9 @@ class _ChatPageState extends State<ChatPage> {
                           reverse: true,
                           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                          itemCount: state.messages.length + (state.loadingOlder ? 1 : 0),
+                          itemCount: messages.length + (state.loadingOlder ? 1 : 0),
                           itemBuilder: (context, index) {
-                            if (index == state.messages.length) {
+                            if (index == messages.length) {
                               return const Padding(
                                 padding: EdgeInsets.symmetric(vertical: 14),
                                 child: Center(
@@ -1238,12 +1240,12 @@ class _ChatPageState extends State<ChatPage> {
                                 ),
                               );
                             }
-                            final chronologicalIndex = state.messages.length - 1 - index;
-                            final current = state.messages[chronologicalIndex];
+                            final chronologicalIndex = messages.length - 1 - index;
+                            final current = messages[chronologicalIndex];
                             final showDateHeader = chronologicalIndex == 0 ||
                                 !_isSameDay(
                                   current.createdAt,
-                                  state.messages[chronologicalIndex - 1].createdAt,
+                                  messages[chronologicalIndex - 1].createdAt,
                                 );
 
                             final isMine = current.senderId == widget.currentUserId;
@@ -1271,7 +1273,7 @@ class _ChatPageState extends State<ChatPage> {
                                     avatarInitial: avatarInitial,
                                     isHighlighted: _highlightedMessageId == current.id || _highlightedMessageId == current.clientTempId,
                                     onLongPress: () => _showMessageActionMenu(current),
-                                    onQuotedMessageTap: (quotedId) => _scrollToMessage(quotedId, state.messages),
+                                    onQuotedMessageTap: (quotedId) => _scrollToMessage(quotedId, messages),
                                   ),
                                 ),
                               ],

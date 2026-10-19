@@ -48,8 +48,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       userId: userId,
       otherUserId: otherUserId,
     );
-    final initialMessages = [...cached, ...pendingList]
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final initialMessages = MessageModel.deduplicate([...cached, ...pendingList]);
 
     // Chat is always ready to display and accept new messages immediately
     emit(state.copyWith(
@@ -78,18 +77,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         userId: userId,
         otherUserId: otherUserId,
       );
-      final serverIds = result.messages.map((m) => m.id).toSet();
-      final serverClientTempIds = result.messages
-          .where((m) => m.clientTempId != null && m.clientTempId!.isNotEmpty)
-          .map((m) => m.clientTempId!)
-          .toSet();
-      final stillPending = currentPending
-          .where((p) =>
-              !serverIds.contains(p.id) &&
-              !(p.clientTempId != null && serverClientTempIds.contains(p.clientTempId)))
-          .toList();
-      final combined = [...result.messages, ...stillPending]
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final pendingFromState = state.messages.where((m) => m.isPending || m.id.startsWith('temp_'));
+      final combined = MessageModel.deduplicate([
+        ...result.messages,
+        ...currentPending,
+        ...pendingFromState,
+      ]);
 
       emit(state.copyWith(
         status: ChatStatus.ready,
@@ -99,6 +92,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       ));
       add(const ChatMarkedRead());
 
+      final stillPending = combined.where((m) => m.isPending || m.id.startsWith('temp_'));
       if (stillPending.isNotEmpty && socket.isConnected) {
         add(const ChatFlushPendingRequested());
       }
@@ -141,10 +135,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         return;
       }
 
-      final existingIds = state.messages.map((m) => m.id).toSet();
-      final newOlder = result.messages.where((m) => !existingIds.contains(m.id)).toList();
-
-      final combined = [...newOlder, ...state.messages];
+      final combined = MessageModel.deduplicate([...result.messages, ...state.messages]);
       emit(state.copyWith(
         loadingOlder: false,
         messages: combined,
@@ -193,8 +184,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         final tempId = state.messages[pendingIdx].id;
         final updatedList = List<MessageModel>.from(state.messages);
         updatedList[pendingIdx] = message;
-        updatedList.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-        emit(state.copyWith(messages: updatedList, status: ChatStatus.ready));
+        emit(state.copyWith(messages: MessageModel.deduplicate(updatedList), status: ChatStatus.ready));
 
         repository.replacePendingMessage(
           userId: userId,
@@ -212,9 +202,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       }
     }
 
-    if (state.messages.any((item) => item.id == message.id)) return;
-    final newMessages = [...state.messages, message]
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (state.messages.any((item) => item.id == message.id || (message.clientTempId != null && item.clientTempId == message.clientTempId))) return;
+    final newMessages = MessageModel.deduplicate([...state.messages, message]);
     emit(state.copyWith(messages: newMessages, status: ChatStatus.ready));
 
     // Save to local cache
@@ -262,8 +251,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     // Optimistically add to conversation:
     // If online with empty queue: immediately shows Single Tick (✓ MessageStatus.sent)
     // If offline or queue has earlier pending messages: shows Clock Icon (🕒) to preserve FIFO sequence
-    final currentList = [...state.messages, pendingMessage]
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final currentList = MessageModel.deduplicate([...state.messages, pendingMessage]);
 
     emit(state.copyWith(
       messages: currentList,
@@ -312,10 +300,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           confirmedMessage: confirmedMessage,
         );
         final updated = state.messages
-            .map((m) => m.id == tempId ? confirmedMessage : m)
-            .toList()
-          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-        emit(state.copyWith(messages: updated));
+            .map((m) => (m.id == tempId || m.clientTempId == tempId) ? confirmedMessage : m)
+            .toList();
+        emit(state.copyWith(messages: MessageModel.deduplicate(updated)));
       }
     } catch (_) {
       // If sending failed (network drop/timeout), transition to Clock Icon (🕒) and queue
@@ -327,10 +314,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       );
       await repository.savePendingMessage(markedPending);
       final updated = state.messages
-          .map((m) => m.id == tempId ? markedPending : m)
-          .toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      emit(state.copyWith(messages: updated));
+          .map((m) => (m.id == tempId || m.clientTempId == tempId) ? markedPending : m)
+          .toList();
+      emit(state.copyWith(messages: MessageModel.deduplicate(updated)));
     } finally {
       repository.clearMessageInFlight(tempId);
     }
@@ -350,20 +336,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         otherUserId: otherUserId,
       );
 
-      final queueMap = <String, MessageModel>{};
-      for (final m in state.messages) {
-        if (m.isPending || m.id.startsWith('temp_')) {
-          queueMap[m.id] = m;
-        }
-      }
-      for (final m in pendingList) {
-        queueMap[m.id] = m;
-      }
+      final queue = MessageModel.deduplicate([
+        ...state.messages.where((m) => m.isPending || m.id.startsWith('temp_')),
+        ...pendingList,
+      ]);
 
-      if (queueMap.isEmpty) return;
-
-      final queue = queueMap.values.toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      if (queue.isEmpty) return;
 
       for (final pending in queue) {
         if (!socket.isConnected) break;
@@ -391,10 +369,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
               confirmedMessage: confirmed,
             );
             final updated = state.messages
-                .map((m) => m.id == pending.id ? confirmed : m)
-                .toList()
-              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-            emit(state.copyWith(messages: updated));
+                .map((m) => (m.id == pending.id || m.clientTempId == pending.id) ? confirmed : m)
+                .toList();
+            emit(state.copyWith(messages: MessageModel.deduplicate(updated)));
           }
         } catch (_) {
           // Disconnected or socket error; pause flush and resume on next connect
