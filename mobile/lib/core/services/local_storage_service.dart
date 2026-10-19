@@ -88,6 +88,43 @@ class LocalStorageService {
     } catch (_) {}
   }
 
+  Future<void> recordIncomingMessage({
+    required String currentUserId,
+    required String senderId,
+    required String senderName,
+    required String messageText,
+    required String createdAt,
+  }) async {
+    try {
+      if (currentUserId.isEmpty || senderId.isEmpty) return;
+      final users = await getUsers(currentUserId);
+      bool found = false;
+      final updated = users.map((u) {
+        if (u.id == senderId) {
+          found = true;
+          return u.copyWith(
+            latestMessageAt: createdAt,
+            unreadCount: u.unreadCount + 1,
+          );
+        }
+        return u;
+      }).toList();
+
+      if (!found) {
+        updated.add(UserModel(
+          id: senderId,
+          name: senderName,
+          username: senderName,
+          status: 'online',
+          latestMessageAt: createdAt,
+          unreadCount: 1,
+        ));
+      }
+
+      await saveUsers(currentUserId, updated);
+    } catch (_) {}
+  }
+
   // ── Conversation Messages Cache ──────────────────────────────────────────
 
   Future<File> _getMessagesFile(String u1, String u2) async {

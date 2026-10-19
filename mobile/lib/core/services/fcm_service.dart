@@ -5,9 +5,11 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import '../../firebase_options.dart';
+import '../../data/models/message_model.dart';
 import '../constants/api_constants.dart';
 import '../network/api_client.dart';
 import '../storage/secure_storage_service.dart';
+import 'local_storage_service.dart';
 import 'notification_service.dart';
 
 @pragma('vm:entry-point')
@@ -15,13 +17,22 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // If the user has logged out, ignore all background messages
+    // 1. Session check: if user is logged out, drop background notification
     final userToken = await SecureStorageService().getToken();
-    if (userToken == null || userToken.isEmpty) {
-      if (kDebugMode) print('[FCM] Dropping background notification: user is logged out');
+    final userStr = await SecureStorageService().getUser();
+    if (userToken == null || userToken.isEmpty || userStr == null || userStr.isEmpty) {
+      if (kDebugMode) print('[FCM] Dropping background message: user is logged out');
       return;
     }
 
+    String currentUserId = '';
+    try {
+      final userData = jsonDecode(userStr);
+      currentUserId = userData['id']?.toString() ?? userData['_id']?.toString() ?? '';
+    } catch (_) {}
+    if (currentUserId.isEmpty) return;
+
+    // 2. Initialize Firebase in background isolate
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
@@ -35,14 +46,52 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final data = message.data;
     if (data.isEmpty) return;
 
-    // WhatsApp architecture: extract message details from the silent data block
+    // 3. Parse incoming chat payload
     final senderId = data['senderId']?.toString() ?? '';
-    final title = data['title']?.toString() ?? data['senderName']?.toString() ?? 'New Message';
-    final body = data['body']?.toString() ?? data['text']?.toString() ?? data['preview']?.toString() ?? '';
-    final messageId = data['messageId']?.toString() ?? message.messageId;
+    final receiverId = data['receiverId']?.toString() ?? currentUserId;
+    final senderName = data['senderName']?.toString() ?? data['title']?.toString() ?? 'User';
+    final text = data['text']?.toString() ?? data['body']?.toString() ?? data['preview']?.toString() ?? '';
+    final messageId = data['messageId']?.toString() ?? message.messageId ?? 'msg_${DateTime.now().millisecondsSinceEpoch}';
+    final createdAt = data['createdAt']?.toString() ?? DateTime.now().toUtc().toIso8601String();
+    final mediaUrl = data['mediaUrl']?.toString();
+    final mediaType = data['mediaType']?.toString();
+    final mediaName = data['mediaName']?.toString();
+    final mediaSize = int.tryParse(data['mediaSize']?.toString() ?? '0');
 
-    if (senderId.isEmpty && title.isEmpty && body.isEmpty) return;
+    if (senderId.isEmpty && text.isEmpty && (mediaUrl == null || mediaUrl.isEmpty)) return;
 
+    // 4. WRITE TO LOCAL CACHE IMMEDIATELY (WhatsApp background sync engine)
+    final incomingMessage = MessageModel(
+      id: messageId,
+      senderId: senderId,
+      receiverId: receiverId,
+      text: text,
+      createdAt: createdAt,
+      mediaUrl: mediaUrl != null && mediaUrl.isNotEmpty ? mediaUrl : null,
+      mediaType: mediaType != null && mediaType.isNotEmpty ? mediaType : null,
+      mediaName: mediaName != null && mediaName.isNotEmpty ? mediaName : null,
+      mediaSize: mediaSize,
+      deliveredAt: createdAt,
+    );
+
+    final localStorage = LocalStorageService();
+    // A) Append into conversation history cache so offline opening immediately has this message!
+    await localStorage.appendSingleMessage(currentUserId, senderId, incomingMessage);
+
+    // B) Update contact's unreadCount and latestMessageAt in dashboard cache
+    await localStorage.recordIncomingMessage(
+      currentUserId: currentUserId,
+      senderId: senderId,
+      senderName: senderName,
+      messageText: text,
+      createdAt: createdAt,
+    );
+
+    if (kDebugMode) {
+      print('[FCM] Successfully cached incoming background message from $senderName ($messageId)');
+    }
+
+    // 5. Parse historical lines for multi-message WhatsApp inbox-style grouping
     List<String>? historicalLines;
     final rawLines = data['unreadLines']?.toString();
     if (rawLines != null && rawLines.isNotEmpty) {
@@ -54,14 +103,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } catch (_) {}
     }
 
-    // App-controlled local notification trigger via flutter_local_notifications
+    // 6. TRIGGER LOCAL BANNER ONLY AFTER LOCAL CACHE WRITE SUCCEEDS
     final notifService = NotificationService();
     await notifService.initialize();
     await notifService.showMessageNotification(
       senderId: senderId.isNotEmpty ? senderId : 'general',
-      senderName: title,
-      messageText: body,
+      senderName: senderName,
+      messageText: text,
       messageId: messageId,
+      mediaType: mediaType,
       historicalLines: historicalLines,
     );
   } catch (e) {
@@ -105,17 +155,47 @@ class FcmService {
       // 3. Foreground message listener (when app is in foreground)
       FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
         final userToken = await SecureStorageService().getToken();
-        if (userToken == null || userToken.isEmpty) return;
+        final userStr = await SecureStorageService().getUser();
+        if (userToken == null || userToken.isEmpty || userStr == null || userStr.isEmpty) return;
+
+        String currentUserId = '';
+        try {
+          final userData = jsonDecode(userStr);
+          currentUserId = userData['id']?.toString() ?? userData['_id']?.toString() ?? '';
+        } catch (_) {}
 
         final data = message.data;
         if (data.isEmpty) return;
 
         final senderId = data['senderId']?.toString() ?? '';
-        final title = data['title']?.toString() ?? data['senderName']?.toString() ?? 'New Message';
-        final body = data['body']?.toString() ?? data['text']?.toString() ?? '';
-        final messageId = data['messageId']?.toString() ?? message.messageId;
+        final receiverId = data['receiverId']?.toString() ?? currentUserId;
+        final senderName = data['senderName']?.toString() ?? data['title']?.toString() ?? 'User';
+        final body = data['body']?.toString() ?? data['text']?.toString() ?? data['preview']?.toString() ?? '';
+        final messageId = data['messageId']?.toString() ?? message.messageId ?? 'msg_${DateTime.now().millisecondsSinceEpoch}';
+        final createdAt = data['createdAt']?.toString() ?? DateTime.now().toUtc().toIso8601String();
+        final mediaUrl = data['mediaUrl']?.toString();
+        final mediaType = data['mediaType']?.toString();
+        final mediaName = data['mediaName']?.toString();
+        final mediaSize = int.tryParse(data['mediaSize']?.toString() ?? '0');
 
-        if (senderId.isEmpty && title.isEmpty && body.isEmpty) return;
+        if (senderId.isEmpty && body.isEmpty && (mediaUrl == null || mediaUrl.isEmpty)) return;
+
+        // WhatsApp architecture: write to local cache in foreground too
+        if (currentUserId.isNotEmpty && senderId.isNotEmpty) {
+          final incomingMessage = MessageModel(
+            id: messageId,
+            senderId: senderId,
+            receiverId: receiverId,
+            text: body,
+            createdAt: createdAt,
+            mediaUrl: mediaUrl != null && mediaUrl.isNotEmpty ? mediaUrl : null,
+            mediaType: mediaType != null && mediaType.isNotEmpty ? mediaType : null,
+            mediaName: mediaName != null && mediaName.isNotEmpty ? mediaName : null,
+            mediaSize: mediaSize,
+            deliveredAt: createdAt,
+          );
+          await LocalStorageService().appendSingleMessage(currentUserId, senderId, incomingMessage);
+        }
 
         // If the user is actively viewing this sender's chat, suppress the banner
         if (senderId.isNotEmpty && NotificationService().openChatUserId == senderId) return;
@@ -133,9 +213,10 @@ class FcmService {
 
         await NotificationService().showMessageNotification(
           senderId: senderId.isNotEmpty ? senderId : 'general',
-          senderName: title,
+          senderName: senderName,
           messageText: body,
           messageId: messageId,
+          mediaType: mediaType,
           historicalLines: historicalLines,
         );
       });
