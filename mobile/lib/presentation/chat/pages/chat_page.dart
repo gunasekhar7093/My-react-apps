@@ -50,6 +50,7 @@ class _ChatPageState extends State<ChatPage> {
   final _apiClient = ApiClient();
   final _picker = ImagePicker();
   final _controller = TextEditingController();
+  final _inputFocusNode = FocusNode();
   final _scrollController = ScrollController();
   String? _token;
   String? _currentUserName;
@@ -219,6 +220,7 @@ class _ChatPageState extends State<ChatPage> {
     _scrollController.removeListener(_onScroll);
     PresenceConnectionService().reconnectCounter.removeListener(_onPresenceRestored);
     _controller.dispose();
+    _inputFocusNode.dispose();
     _scrollController.dispose();
     // Remove our callbacks from the shared socket but DO NOT disconnect it —
     // the socket belongs to DashboardPage and must remain alive.
@@ -240,7 +242,7 @@ class _ChatPageState extends State<ChatPage> {
     _scrollToBottom();
   }
 
-  void _showMessageActionMenu(MessageModel message) {
+  Future<void> _showMessageActionMenu(MessageModel message) async {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final canCopy = message.text.isNotEmpty || (message.mediaUrl != null && message.mediaUrl!.isNotEmpty);
@@ -248,140 +250,188 @@ class _ChatPageState extends State<ChatPage> {
 
     if (!canCopy && !isMine) return;
 
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1E2433) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              if (canCopy)
-                ListTile(
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.copy_rounded, color: AppTheme.primaryColor, size: 20),
-                  ),
-                  title: Text(
-                    'Copy',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                  onTap: () async {
-                    Navigator.of(sheetCtx).pop();
-                    final textToCopy = message.text.isNotEmpty ? message.text : (message.mediaUrl ?? '');
-                    if (textToCopy.isNotEmpty) {
-                      await Clipboard.setData(ClipboardData(text: textToCopy));
-                    }
-                  },
-                ),
-              if (isMine)
-                ListTile(
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.redAccent.withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.undo_rounded, color: Colors.redAccent, size: 20),
-                  ),
-                  title: const Text(
-                    'Unsend',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.redAccent,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.of(sheetCtx).pop();
-                    _showUnsendConfirmationDialog(message);
-                  },
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+    // Immediately dismiss soft keyboard and disable focus requesting
+    // to prevent keyboard from popping up after copying or unsending
+    _inputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    _inputFocusNode.canRequestFocus = false;
 
-  void _showUnsendConfirmationDialog(MessageModel message) {
-    final theme = Theme.of(context);
-    showDialog<void>(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: theme.brightness == Brightness.dark
-            ? theme.colorScheme.surfaceContainerHigh
-            : Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+    String? selectedAction;
+    try {
+      selectedAction = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: isDark ? const Color(0xFF1E2433) : Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        title: Text(
-          'unsend this message?',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: theme.colorScheme.onSurface,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: Text(
-              'cancel',
-              style: TextStyle(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w500,
-              ),
+        builder: (sheetCtx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                if (canCopy)
+                  ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.copy_rounded, color: AppTheme.primaryColor, size: 20),
+                    ),
+                    title: Text(
+                      'Copy',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    onTap: () async {
+                      Navigator.of(sheetCtx).pop('copy');
+                      final textToCopy = message.text.isNotEmpty ? message.text : (message.mediaUrl ?? '');
+                      if (textToCopy.isNotEmpty) {
+                        await Clipboard.setData(ClipboardData(text: textToCopy));
+                        HapticFeedback.lightImpact();
+                      }
+                    },
+                  ),
+                if (isMine)
+                  ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.undo_rounded, color: Colors.redAccent, size: 20),
+                    ),
+                    title: const Text(
+                      'Unsend',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.redAccent,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop('unsend');
+                    },
+                  ),
+              ],
             ),
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogCtx).pop();
-              _bloc.add(ChatMessageDeleteRequested(message.id));
-            },
-            child: const Text(
-              'unsend',
-              style: TextStyle(
-                color: Colors.redAccent,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+        ),
+      );
+    } finally {
+      if (selectedAction == 'unsend') {
+        await _showUnsendConfirmationDialog(message);
+      } else {
+        _inputFocusNode.unfocus();
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _inputFocusNode.unfocus();
+            _inputFocusNode.canRequestFocus = true;
+          }
+        });
+      }
+    }
   }
 
-  void _openAttachmentPicker() {
+  Future<void> _showUnsendConfirmationDialog(MessageModel message) async {
     final theme = Theme.of(context);
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: theme.scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
+
+    // Keep keyboard dismissed and prevent auto-refocus
+    _inputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    _inputFocusNode.canRequestFocus = false;
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          backgroundColor: theme.brightness == Brightness.dark
+              ? theme.colorScheme.surfaceContainerHigh
+              : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            'Unsend this message?',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _inputFocusNode.unfocus();
+                Navigator.of(dialogCtx).pop();
+              },
+              child: Text(
+                'Cancel',
+                style: TextStyle(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                _inputFocusNode.unfocus();
+                Navigator.of(dialogCtx).pop();
+                _bloc.add(ChatMessageDeleteRequested(message.id));
+              },
+              child: const Text(
+                'Unsend',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _inputFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _inputFocusNode.unfocus();
+          _inputFocusNode.canRequestFocus = true;
+        }
+      });
+    }
+  }
+
+  Future<void> _openAttachmentPicker() async {
+    final theme = Theme.of(context);
+    _inputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    _inputFocusNode.canRequestFocus = false;
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: theme.scaffoldBackgroundColor,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -455,7 +505,17 @@ class _ChatPageState extends State<ChatPage> {
         );
       },
     );
+  } finally {
+    _inputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _inputFocusNode.unfocus();
+        _inputFocusNode.canRequestFocus = true;
+      }
+    });
   }
+}
 
   Future<void> _pickMedia(ImageSource source, {required bool isVideo}) async {
     try {
@@ -485,14 +545,19 @@ class _ChatPageState extends State<ChatPage> {
     final theme = Theme.of(context);
 
     if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: theme.scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) {
+    _inputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    _inputFocusNode.canRequestFocus = false;
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: theme.scaffoldBackgroundColor,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (sheetContext) {
         bool uploading = false;
         String? uploadError;
 
@@ -693,7 +758,17 @@ class _ChatPageState extends State<ChatPage> {
         );
       },
     );
+  } finally {
+    _inputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _inputFocusNode.unfocus();
+        _inputFocusNode.canRequestFocus = true;
+      }
+    });
   }
+}
 
   @override Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -844,7 +919,14 @@ class _ChatPageState extends State<ChatPage> {
               children: [
                 // Messages List View (reverse: true so latest messages appear at bottom without scrolling)
                 Expanded(
-                  child: state.messages.isEmpty
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () {
+                      if (_inputFocusNode.hasFocus) {
+                        _inputFocusNode.unfocus();
+                      }
+                    },
+                    child: state.messages.isEmpty
                       ? Center(
                           child: Padding(
                             padding: const EdgeInsets.all(32),
@@ -882,6 +964,7 @@ class _ChatPageState extends State<ChatPage> {
                       : ListView.builder(
                           controller: _scrollController,
                           reverse: true,
+                          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                           itemCount: state.messages.length + (state.loadingOlder ? 1 : 0),
                           itemBuilder: (context, index) {
@@ -931,6 +1014,7 @@ class _ChatPageState extends State<ChatPage> {
                             );
                           },
                         ),
+                  ),
                 ),
 
                 // Floating Input Dock
@@ -969,6 +1053,7 @@ class _ChatPageState extends State<ChatPage> {
                             ),
                             child: TextField(
                               controller: _controller,
+                              focusNode: _inputFocusNode,
                               minLines: 1,
                               maxLines: 4,
                               textCapitalization: TextCapitalization.sentences,
