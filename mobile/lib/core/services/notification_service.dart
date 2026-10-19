@@ -58,6 +58,17 @@ class NotificationService {
         },
       );
 
+      final launchDetails =
+          await _notificationsPlugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp ?? false) {
+        final payload = launchDetails?.notificationResponse?.payload;
+        if (payload != null && payload.isNotEmpty) {
+          Future.delayed(const Duration(milliseconds: 600), () {
+            onNotificationTapped?.call(payload);
+          });
+        }
+      }
+
       if (!kIsWeb && Platform.isAndroid) {
         final androidPlugin =
             _notificationsPlugin.resolvePlatformSpecificImplementation<

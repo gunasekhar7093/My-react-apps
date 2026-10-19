@@ -1134,14 +1134,14 @@ io.on('connection', async (socket) => {
         const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
         const notificationBody = unreadLines.join('\n')
 
-        console.log(`[FCM] Dispatching multicast push to ${receiverTokens.length} device(s) for user ${receiverId} (${notificationTitle})`)
+        console.log(`[FCM] Dispatching data-only multicast push to ${receiverTokens.length} device(s) for user ${receiverId} (${notificationTitle})`)
         firebaseMessaging.sendEachForMulticast({
           tokens: receiverTokens,
-          notification: {
+          // WhatsApp Architecture: Data-only payload (NO notification block)
+          // Allows client app to wake up in background and control the local notification banner
+          data: {
             title: notificationTitle,
             body: notificationBody,
-          },
-          data: {
             senderId: userId,
             senderName,
             messageId: message.id,
@@ -1152,11 +1152,15 @@ io.on('connection', async (socket) => {
           },
           android: {
             priority: 'high',
-            notification: {
-              channelId: 'chatspace_messages_channel',
-              sound: 'default',
-              tag: userId,
-              notificationCount: unreadCount,
+          },
+          apns: {
+            headers: {
+              'apns-priority': '10',
+            },
+            payload: {
+              aps: {
+                contentAvailable: true,
+              },
             },
           },
         }).then((batchResponse) => {

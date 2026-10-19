@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import '../../firebase_options.dart';
 import '../constants/api_constants.dart';
 import '../network/api_client.dart';
@@ -12,6 +13,8 @@ import 'notification_service.dart';
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
+    WidgetsFlutterBinding.ensureInitialized();
+
     // If the user has logged out, ignore all background messages
     final userToken = await SecureStorageService().getToken();
     if (userToken == null || userToken.isEmpty) {
@@ -19,38 +22,48 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       return;
     }
 
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    // If Android didn't display the notification automatically (e.g. data-only payload),
-    // display it manually via local notification service
-    if (message.notification == null) {
-      final senderId = message.data['senderId']?.toString() ?? '';
-      final senderName = message.data['senderName']?.toString() ?? 'User';
-      final text = message.data['text']?.toString() ?? message.data['preview']?.toString() ?? '';
-      final messageId = message.data['messageId']?.toString() ?? message.messageId;
-
-      List<String>? historicalLines;
-      final rawLines = message.data['unreadLines']?.toString();
-      if (rawLines != null && rawLines.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(rawLines);
-          if (decoded is List) {
-            historicalLines = decoded.map((e) => e.toString()).toList();
-          }
-        } catch (_) {}
-      }
-
-      if (senderId.isNotEmpty) {
-        await NotificationService().showMessageNotification(
-          senderId: senderId,
-          senderName: senderName,
-          messageText: text,
-          messageId: messageId,
-          historicalLines: historicalLines,
-        );
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    } catch (_) {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
       }
     }
+
+    final data = message.data;
+    if (data.isEmpty) return;
+
+    // WhatsApp architecture: extract message details from the silent data block
+    final senderId = data['senderId']?.toString() ?? '';
+    final title = data['title']?.toString() ?? data['senderName']?.toString() ?? 'New Message';
+    final body = data['body']?.toString() ?? data['text']?.toString() ?? data['preview']?.toString() ?? '';
+    final messageId = data['messageId']?.toString() ?? message.messageId;
+
+    if (senderId.isEmpty && title.isEmpty && body.isEmpty) return;
+
+    List<String>? historicalLines;
+    final rawLines = data['unreadLines']?.toString();
+    if (rawLines != null && rawLines.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawLines);
+        if (decoded is List) {
+          historicalLines = decoded.map((e) => e.toString()).toList();
+        }
+      } catch (_) {}
+    }
+
+    // App-controlled local notification trigger via flutter_local_notifications
+    final notifService = NotificationService();
+    await notifService.initialize();
+    await notifService.showMessageNotification(
+      senderId: senderId.isNotEmpty ? senderId : 'general',
+      senderName: title,
+      messageText: body,
+      messageId: messageId,
+      historicalLines: historicalLines,
+    );
   } catch (e) {
     if (kDebugMode) print('[FCM] background handler error: $e');
   }
@@ -84,7 +97,7 @@ class FcmService {
         }
       }
 
-      // 2. Register background handler
+      // 2. Register background handler (top-level @pragma('vm:entry-point'))
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
       final messaging = FirebaseMessaging.instance;
@@ -94,14 +107,21 @@ class FcmService {
         final userToken = await SecureStorageService().getToken();
         if (userToken == null || userToken.isEmpty) return;
 
-        final notification = message.notification;
-        final senderId = message.data['senderId']?.toString() ?? '';
-        final senderName = notification?.title ?? message.data['senderName']?.toString() ?? 'User';
-        final body = notification?.body ?? message.data['text']?.toString() ?? '';
-        final messageId = message.data['messageId']?.toString() ?? message.messageId;
+        final data = message.data;
+        if (data.isEmpty) return;
+
+        final senderId = data['senderId']?.toString() ?? '';
+        final title = data['title']?.toString() ?? data['senderName']?.toString() ?? 'New Message';
+        final body = data['body']?.toString() ?? data['text']?.toString() ?? '';
+        final messageId = data['messageId']?.toString() ?? message.messageId;
+
+        if (senderId.isEmpty && title.isEmpty && body.isEmpty) return;
+
+        // If the user is actively viewing this sender's chat, suppress the banner
+        if (senderId.isNotEmpty && NotificationService().openChatUserId == senderId) return;
 
         List<String>? historicalLines;
-        final rawLines = message.data['unreadLines']?.toString();
+        final rawLines = data['unreadLines']?.toString();
         if (rawLines != null && rawLines.isNotEmpty) {
           try {
             final decoded = jsonDecode(rawLines);
@@ -111,15 +131,13 @@ class FcmService {
           } catch (_) {}
         }
 
-        if (senderId.isNotEmpty) {
-          NotificationService().showMessageNotification(
-            senderId: senderId,
-            senderName: senderName,
-            messageText: body,
-            messageId: messageId,
-            historicalLines: historicalLines,
-          );
-        }
+        await NotificationService().showMessageNotification(
+          senderId: senderId.isNotEmpty ? senderId : 'general',
+          senderName: title,
+          messageText: body,
+          messageId: messageId,
+          historicalLines: historicalLines,
+        );
       });
 
       // 4. When user taps notification while app was backgrounded
