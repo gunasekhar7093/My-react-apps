@@ -538,6 +538,16 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
       { id: { $ne: req.userId }, $or: [{ fcmTokens: token }, { fcmToken: token }] },
       { $pull: { fcmTokens: token }, $unset: { fcmToken: '' } }
     )
+
+    // Ensure any legacy single fcmToken is preserved in fcmTokens array before setting new one
+    const currentUser = await usersCollection.findOne({ id: req.userId })
+    if (currentUser?.fcmToken && currentUser.fcmToken !== token) {
+      await usersCollection.updateOne(
+        { id: req.userId },
+        { $addToSet: { fcmTokens: currentUser.fcmToken } }
+      )
+    }
+
     // Add token to current user's array and set latest
     const result = await usersCollection.updateOne(
       { id: req.userId },
@@ -557,6 +567,7 @@ app.post('/api/me/fcm-token', requireAuth, async (req, res) => {
 app.delete('/api/me/fcm-token', requireAuth, async (req, res) => {
   try {
     const token = req.query?.token || req.body?.token
+    const clearAll = req.query?.all === 'true' || req.body?.all === true
     if (token && typeof token === 'string') {
       await usersCollection.updateOne(
         { id: req.userId },
@@ -570,9 +581,11 @@ app.delete('/api/me/fcm-token', requireAuth, async (req, res) => {
         await usersCollection.updateOne({ id: req.userId }, { $unset: { fcmToken: '' } })
       }
       console.log(`[FCM] Specific device token removed for user ${req.userId} (remaining: ${remainingTokens.length})`)
-    } else {
+    } else if (clearAll) {
       await usersCollection.updateOne({ id: req.userId }, { $set: { fcmTokens: [] }, $unset: { fcmToken: '' } })
-      console.log(`[FCM] All tokens removed for user ${req.userId}`)
+      console.log(`[FCM] All tokens explicitly cleared for user ${req.userId}`)
+    } else {
+      console.log(`[FCM] Delete called without specific token or all=true for user ${req.userId}; skipping to preserve other logged in devices`)
     }
     res.json({ ok: true })
   } catch (error) {
@@ -1107,16 +1120,17 @@ io.on('connection', async (socket) => {
       io.to(receiverId).emit('private:message', messageWithUnread)
 
       // ── Cloud Push Notification via Firebase (for closed/background mobile app) ──
-      // Only send FCM when the receiver does NOT have a live socket connection.
-      // When they are online (socket connected), the real-time socket message already
-      // reaches them — sending FCM on top causes duplicate notifications.
-      const rawTokens = Array.isArray(receiver.fcmTokens) ? receiver.fcmTokens : []
+      // Send FCM multicast to all registered device tokens.
+      // Even if one device has a live socket, other devices owned by the same user
+      // (e.g. tablet, second phone, or backgrounded mobile) need the push notification to wake up.
+      // Mobile clients de-duplicate rapid socket + FCM events locally via NotificationService.
+      const rawTokens = Array.isArray(receiver.fcmTokens) ? [...receiver.fcmTokens] : []
       if (receiver.fcmToken && !rawTokens.includes(receiver.fcmToken)) {
         rawTokens.push(receiver.fcmToken)
       }
       const receiverTokens = rawTokens.filter((t) => typeof t === 'string' && t.trim().length > 0)
 
-      if (firebaseMessaging && receiverTokens.length > 0 && !isReceiverOnline) {
+      if (firebaseMessaging && receiverTokens.length > 0) {
         const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
         const notificationBody = unreadLines.join('\n')
 

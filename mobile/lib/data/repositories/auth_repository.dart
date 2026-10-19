@@ -78,12 +78,17 @@ class AuthRepository {
 
   Future<void> logout() async {
     try {
+      final token = await FcmService().getDeviceToken();
       // 1. Dismiss any notifications currently shown for this account
       await NotificationService().cancelAllNotifications();
       // 2. Unregister device token with server and delete locally
       await FcmService().unregisterDeviceToken();
-      // 3. Inform server of logout to unset fcmToken and update status
-      await apiClient.post(ApiConstants.logout, authenticated: true);
+      // 3. Inform server of logout to remove this specific device token and update status
+      await apiClient.post(
+        ApiConstants.logout,
+        body: (token != null && token.isNotEmpty) ? {'token': token} : null,
+        authenticated: true,
+      );
     } catch (_) {
       // Ignore network failures on logout
     } finally {

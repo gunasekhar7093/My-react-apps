@@ -209,28 +209,35 @@ class FcmService {
     }
   }
 
+  /// Retrieves the current device's FCM token, if available.
+  Future<String?> getDeviceToken() async {
+    try {
+      if (!_initialized) await initialize();
+      // ignore: deprecated_member_use
+      return await FirebaseMessaging.instance.getToken();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Unregisters and deletes the device's FCM token upon logout.
   /// Prevents any notifications from arriving when logged out.
   Future<void> unregisterDeviceToken() async {
     try {
-      String? token;
-      try {
-        // ignore: deprecated_member_use
-        token = await FirebaseMessaging.instance.getToken();
-      } catch (_) {}
+      final token = await getDeviceToken();
 
       // 1. Unregister this specific device's token on backend
-      try {
-        final path = (token != null && token.isNotEmpty)
-            ? '${ApiConstants.fcmToken}?token=${Uri.encodeComponent(token)}'
-            : ApiConstants.fcmToken;
-        await _apiClient.delete(
-          path,
-          authenticated: true,
-        );
-        if (kDebugMode) print('[FCM] Server token unregistration sent');
-      } catch (e) {
-        if (kDebugMode) print('[FCM] Failed to unregister token from server: $e');
+      if (token != null && token.isNotEmpty) {
+        try {
+          final path = '${ApiConstants.fcmToken}?token=${Uri.encodeComponent(token)}';
+          await _apiClient.delete(
+            path,
+            authenticated: true,
+          );
+          if (kDebugMode) print('[FCM] Server token unregistration sent for current device');
+        } catch (e) {
+          if (kDebugMode) print('[FCM] Failed to unregister token from server: $e');
+        }
       }
 
       // 2. Invalidate and delete local FCM token
