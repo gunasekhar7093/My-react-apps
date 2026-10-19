@@ -1795,15 +1795,17 @@ class _Bubble extends StatelessWidget {
           ],
         ),
         child: message.replyTo != null
-            ? Column(
-                crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildQuotedSection(context, theme, message.replyTo!),
-                  hasMedia
-                      ? _buildMediaBubble(context, theme, fullMediaUrl)
-                      : _buildTextBubble(context, theme, maxWidth - 24),
-                ],
+            ? IntrinsicWidth(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildQuotedSection(context, theme, message.replyTo!),
+                    hasMedia
+                        ? _buildMediaBubble(context, theme, fullMediaUrl)
+                        : _buildTextBubble(context, theme, maxWidth - 24),
+                  ],
+                ),
               )
             : (hasMedia
                 ? _buildMediaBubble(context, theme, fullMediaUrl)
@@ -1815,14 +1817,21 @@ class _Bubble extends StatelessWidget {
 
   Widget _buildQuotedSection(BuildContext context, ThemeData theme, MessageReplyModel reply) {
     final isOutgoing = mine;
-    final barColor = isOutgoing ? Colors.white : AppTheme.primaryColor;
+    // WhatsApp style: light purple/lavender accent on outgoing bubbles
+    final barColor = isOutgoing
+        ? const Color(0xFFC4B5FD)
+        : AppTheme.primaryColor;
     final bgColor = isOutgoing
-        ? Colors.black.withValues(alpha: 0.22)
+        ? Colors.black.withValues(alpha: 0.18)
         : (theme.brightness == Brightness.dark
             ? Colors.white.withValues(alpha: 0.08)
             : const Color(0xFFF1F3F7));
-    final titleColor = isOutgoing ? Colors.white : AppTheme.primaryColor;
-    final bodyColor = isOutgoing ? Colors.white.withValues(alpha: 0.88) : theme.colorScheme.onSurfaceVariant;
+    final titleColor = isOutgoing
+        ? const Color(0xFFE9D5FF)
+        : AppTheme.primaryColor;
+    final bodyColor = isOutgoing
+        ? Colors.white.withValues(alpha: 0.90)
+        : theme.colorScheme.onSurfaceVariant;
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1832,11 +1841,12 @@ class _Bubble extends StatelessWidget {
         }
       },
       child: Container(
+        constraints: const BoxConstraints(minWidth: 130),
         margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+        padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
         decoration: BoxDecoration(
           color: bgColor,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(8),
           border: Border(
             left: BorderSide(
               color: barColor,
