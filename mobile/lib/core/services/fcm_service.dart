@@ -60,7 +60,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
     if (senderId.isEmpty && text.isEmpty && (mediaUrl == null || mediaUrl.isEmpty)) return;
 
-    // 4. WRITE TO LOCAL CACHE IMMEDIATELY (WhatsApp background sync engine)
+    // 4. PREPARE & INITIALIZE DATABASE CONNECTION IN BACKGROUND ISOLATE
+    final localStorage = LocalStorageService();
+    // Explicit background initialization: connects to database files, handles isolates, avoids lock crashes
+    await localStorage.initialize();
+
+    // 5. WRITE TO LOCAL CACHE IMMEDIATELY (WhatsApp background sync engine)
     final incomingMessage = MessageModel(
       id: messageId,
       senderId: senderId,
@@ -74,7 +79,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       deliveredAt: createdAt,
     );
 
-    final localStorage = LocalStorageService();
     // A) Append into conversation history cache so offline opening immediately has this message!
     await localStorage.appendSingleMessage(currentUserId, senderId, incomingMessage);
 
@@ -194,6 +198,7 @@ class FcmService {
             mediaSize: mediaSize,
             deliveredAt: createdAt,
           );
+          await LocalStorageService().initialize();
           await LocalStorageService().appendSingleMessage(currentUserId, senderId, incomingMessage);
         }
 

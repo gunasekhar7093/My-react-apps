@@ -15,6 +15,50 @@ class LocalStorageService {
   LocalStorageService._internal();
 
   Directory? _cacheDir;
+  bool _initialized = false;
+
+  /// Explicit initialization step for LocalStorageService.
+  /// Required in background processes/isolates (e.g. firebaseMessagingBackgroundHandler)
+  /// and when the app starts up.
+  ///
+  /// Guarantees:
+  /// 1. Establishes connection to the underlying offline cache/database files.
+  /// 2. If storage is already open (e.g. app in background or already initialized),
+  ///    gracefully uses the existing open instance instead of crashing due to duplicate lock files.
+  /// 3. Ensures the cache directory exists and is ready for read/write in standalone isolates.
+  Future<void> initialize({String? customPath}) async {
+    if (_initialized && _cacheDir != null && await _cacheDir!.exists()) {
+      return;
+    }
+
+    try {
+      if (customPath != null && customPath.trim().isNotEmpty) {
+        final dir = Directory(customPath.trim());
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        _cacheDir = dir;
+      } else {
+        await _getCacheDirectory();
+      }
+      _initialized = true;
+    } catch (_) {
+      try {
+        final tempDir = await getTemporaryDirectory();
+        final dir = Directory('${tempDir.path}/chatspace_offline_cache');
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        _cacheDir = dir;
+        _initialized = true;
+      } catch (e) {
+        _initialized = false;
+        rethrow;
+      }
+    }
+  }
+
+  bool get isInitialized => _initialized && _cacheDir != null;
 
   Future<Directory> _getCacheDirectory() async {
     if (_cacheDir != null && await _cacheDir!.exists()) {
@@ -27,6 +71,34 @@ class LocalStorageService {
     }
     _cacheDir = dir;
     return dir;
+  }
+
+  /// Safely writes content to disk using an atomic temporary file swap.
+  /// Prevents isolate write conflicts, file lock crashes, and corrupted data.
+  Future<void> _safeWriteFile(File targetFile, String content) async {
+    final tempFile = File('${targetFile.path}.${DateTime.now().microsecondsSinceEpoch}.tmp');
+    try {
+      await tempFile.writeAsString(content, flush: true);
+      if (await targetFile.exists()) {
+        try {
+          await tempFile.rename(targetFile.path);
+        } catch (_) {
+          await targetFile.writeAsString(content, flush: true);
+        }
+      } else {
+        await tempFile.rename(targetFile.path);
+      }
+    } catch (_) {
+      try {
+        await targetFile.writeAsString(content, flush: true);
+      } catch (_) {}
+    } finally {
+      try {
+        if (await tempFile.exists()) {
+          await tempFile.delete();
+        }
+      } catch (_) {}
+    }
   }
 
   String _conversationKey(String u1, String u2) {
@@ -46,7 +118,7 @@ class LocalStorageService {
       if (currentUserId.isEmpty) return;
       final file = await _getUsersFile(currentUserId);
       final jsonList = users.map((u) => u.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (e) {
       // Ignore cache write errors
     }
@@ -259,7 +331,7 @@ class LocalStorageService {
 
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = finalMessages.map((m) => m.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }
 
@@ -278,7 +350,7 @@ class LocalStorageService {
 
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = merged.map((m) => m.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }
 
@@ -295,7 +367,7 @@ class LocalStorageService {
           .toList();
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = filtered.map((m) => m.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }
 
@@ -328,7 +400,7 @@ class LocalStorageService {
                   }
                   return true;
                 }).toList();
-                await file.writeAsString(jsonEncode(filtered), flush: true);
+                await _safeWriteFile(file, jsonEncode(filtered));
               }
             }
           } catch (_) {}
@@ -365,7 +437,7 @@ class LocalStorageService {
       if (changed) {
         final file = await _getMessagesFile(userId, otherUserId);
         final jsonList = updated.map((m) => m.toJson()).toList();
-        await file.writeAsString(jsonEncode(jsonList), flush: true);
+        await _safeWriteFile(file, jsonEncode(jsonList));
       }
     } catch (_) {}
   }
@@ -400,7 +472,7 @@ class LocalStorageService {
       if (changed) {
         final file = await _getMessagesFile(userId, otherUserId);
         final jsonList = updated.map((m) => m.toJson()).toList();
-        await file.writeAsString(jsonEncode(jsonList), flush: true);
+        await _safeWriteFile(file, jsonEncode(jsonList));
       }
     } catch (_) {}
   }
@@ -456,7 +528,7 @@ class LocalStorageService {
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       final file = await _getPendingQueueFile();
       final jsonList = sortedList.map((m) => m.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }
 
@@ -469,7 +541,7 @@ class LocalStorageService {
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       final file = await _getPendingQueueFile();
       final jsonList = filtered.map((m) => m.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }
 
@@ -500,7 +572,7 @@ class LocalStorageService {
 
       final file = await _getMessagesFile(userId, otherUserId);
       final jsonList = replaced.map((m) => m.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList), flush: true);
+      await _safeWriteFile(file, jsonEncode(jsonList));
     } catch (_) {}
   }
 
@@ -531,7 +603,7 @@ class LocalStorageService {
       final existing = await getPendingReadReceipts();
       existing.add(partnerId);
       final file = await _getPendingReadReceiptsFile();
-      await file.writeAsString(jsonEncode(existing.toList()), flush: true);
+      await _safeWriteFile(file, jsonEncode(existing.toList()));
     } catch (_) {}
   }
 
@@ -540,7 +612,7 @@ class LocalStorageService {
       final existing = await getPendingReadReceipts();
       if (existing.remove(partnerId)) {
         final file = await _getPendingReadReceiptsFile();
-        await file.writeAsString(jsonEncode(existing.toList()), flush: true);
+        await _safeWriteFile(file, jsonEncode(existing.toList()));
       }
     } catch (_) {}
   }

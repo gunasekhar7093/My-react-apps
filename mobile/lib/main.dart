@@ -75,7 +75,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
     if (senderId.isEmpty && text.isEmpty && (mediaUrl == null || mediaUrl.isEmpty)) return;
 
-    // 4. WRITE TO LOCAL CACHE IMMEDIATELY (WhatsApp background sync engine)
+    // 4. PREPARE & INITIALIZE DATABASE CONNECTION IN BACKGROUND ISOLATE
+    final localStorage = LocalStorageService();
+    // Explicit background initialization: connects to database files, handles isolates, avoids lock crashes
+    await localStorage.initialize();
+
+    // 5. WRITE TO LOCAL CACHE IMMEDIATELY (WhatsApp background sync engine)
     final incomingMessage = MessageModel(
       id: messageId,
       senderId: senderId,
@@ -89,7 +94,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       deliveredAt: createdAt,
     );
 
-    final localStorage = LocalStorageService();
     // A) Append into conversation history cache so offline opening immediately has this message!
     await localStorage.appendSingleMessage(currentUserId, senderId, incomingMessage);
 
@@ -106,7 +110,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       print('[FCM] Successfully cached incoming background message from $senderName ($messageId)');
     }
 
-    // 5. Parse historical lines for multi-message WhatsApp inbox-style grouping
+    // 6. Parse historical lines for multi-message WhatsApp inbox-style grouping
     List<String>? historicalLines;
     final rawLines = data['unreadLines']?.toString();
     if (rawLines != null && rawLines.isNotEmpty) {
@@ -118,7 +122,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } catch (_) {}
     }
 
-    // 6. TRIGGER LOCAL BANNER ONLY AFTER LOCAL CACHE WRITE SUCCEEDS
+    // 7. TRIGGER LOCAL BANNER ONLY AFTER LOCAL CACHE WRITE SUCCEEDS
     final notifService = NotificationService();
     await notifService.initialize();
     await notifService.showMessageNotification(
@@ -138,6 +142,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Register top-level background handler with Firebase Messaging
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  // Pre-initialize offline storage engine connection
+  await LocalStorageService().initialize();
   // Pre-initialize local notifications for incoming message alerts
   await NotificationService().initialize();
   // Pre-initialize Firebase Cloud Messaging
