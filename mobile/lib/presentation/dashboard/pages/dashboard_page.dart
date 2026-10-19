@@ -65,9 +65,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _connectSocket();
   }
 
-  void _onPresenceRestored() {
+  void _onPresenceRestored() async {
     if (mounted) {
-      _bloc.add(const DashboardUsersRefreshRequested());
+      await _flushPendingReadReceipts();
+      if (mounted) {
+        _bloc.add(const DashboardUsersRefreshRequested());
+      }
     }
   }
 
@@ -225,7 +228,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     } catch (_) {}
   }
 
+  bool _isFlushingReadReceipts = false;
+
   Future<void> _flushPendingReadReceipts() async {
+    if (_isFlushingReadReceipts) return;
+    _isFlushingReadReceipts = true;
     try {
       final currentUserId = context.read<AuthBloc>().state.user?.id;
       if (currentUserId == null || currentUserId.isEmpty) return;
@@ -233,17 +240,23 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       if (pendingPartners.isEmpty) return;
 
       for (final partnerId in pendingPartners) {
-        if (!_socket.isConnected) break;
-        _socket.emitMessagesRead(partnerId);
+        if (_socket.isConnected) {
+          _socket.emitMessagesRead(partnerId);
+        }
         try {
           await ApiClient().post(
             '/api/messages/$currentUserId/$partnerId/read',
             authenticated: true,
           );
           await MessageRepository().removePendingReadReceipt(partnerId);
+          if (mounted) {
+            _bloc.add(DashboardUserUnreadCleared(partnerId));
+          }
         } catch (_) {}
       }
-    } catch (_) {}
+    } catch (_) {} finally {
+      _isFlushingReadReceipts = false;
+    }
   }
 
   Future<void> _connectSocket() async {

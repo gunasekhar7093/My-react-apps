@@ -33,7 +33,12 @@ class UserRepository {
   Future<List<UserModel>> getCachedUsers() async {
     final currentUserId = await _getCurrentUserId();
     if (currentUserId != null && currentUserId.isNotEmpty) {
-      return localStorage.getUsers(currentUserId);
+      final cached = await localStorage.getUsers(currentUserId);
+      final pendingPartners = await localStorage.getPendingReadReceipts();
+      if (pendingPartners.isEmpty) return cached;
+      return cached
+          .map((u) => pendingPartners.contains(u.id) ? u.copyWith(unreadCount: 0) : u)
+          .toList();
     }
     return const [];
   }
@@ -42,10 +47,17 @@ class UserRepository {
     final currentUserId = await _getCurrentUserId();
     try {
       final data = await apiClient.getList(ApiConstants.users, authenticated: true);
-      final users = data
+      final rawUsers = data
           .whereType<Map>()
           .map((m) => UserModel.fromJson(Map<String, dynamic>.from(m)))
           .toList();
+
+      final pendingPartners = await localStorage.getPendingReadReceipts();
+      final users = pendingPartners.isEmpty
+          ? rawUsers
+          : rawUsers
+              .map((u) => pendingPartners.contains(u.id) ? u.copyWith(unreadCount: 0) : u)
+              .toList();
 
       if (currentUserId != null && currentUserId.isNotEmpty) {
         await localStorage.saveUsers(currentUserId, users);
@@ -55,7 +67,12 @@ class UserRepository {
       if (currentUserId != null && currentUserId.isNotEmpty) {
         final cached = await localStorage.getUsers(currentUserId);
         if (cached.isNotEmpty) {
-          return cached;
+          final pendingPartners = await localStorage.getPendingReadReceipts();
+          return pendingPartners.isEmpty
+              ? cached
+              : cached
+                  .map((u) => pendingPartners.contains(u.id) ? u.copyWith(unreadCount: 0) : u)
+                  .toList();
         }
       }
       rethrow;

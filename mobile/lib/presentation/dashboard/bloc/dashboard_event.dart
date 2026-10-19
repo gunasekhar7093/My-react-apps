@@ -56,3 +56,8 @@ class DashboardOpenChatChanged extends DashboardEvent {
   final String? openUserId;
   const DashboardOpenChatChanged(this.openUserId);
 }
+
+class DashboardUserUnreadCleared extends DashboardEvent {
+  final String userId;
+  const DashboardUserUnreadCleared(this.userId);
+}

@@ -18,6 +18,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardPrivateMessageReceived>(_onPrivateMessageReceived);
     on<DashboardUnreadCountReconciled>(_onUnreadCountReconciled);
     on<DashboardOpenChatChanged>(_onOpenChatChanged);
+    on<DashboardUserUnreadCleared>(_onUserUnreadCleared);
   }
 
   Future<void> _onStarted(DashboardStarted event, Emitter<DashboardState> emit) async {
@@ -40,9 +41,13 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     if (showLoading) emit(state.copyWith(status: DashboardStatus.loading, errorMessage: null));
     try {
       final users = await repository.getUsers();
-      final adjustedUsers = state.openChatUserId == null
-          ? users
-          : users.map((u) => u.id == state.openChatUserId ? u.copyWith(unreadCount: 0) : u).toList();
+      final pendingPartners = await repository.localStorage.getPendingReadReceipts();
+      final adjustedUsers = users.map((u) {
+        if (u.id == state.openChatUserId || pendingPartners.contains(u.id)) {
+          return u.copyWith(unreadCount: 0);
+        }
+        return u;
+      }).toList();
 
       if (_sameUsers(state.users, adjustedUsers)) {
         if (state.status != DashboardStatus.ready) {
@@ -200,6 +205,20 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     emit(state.copyWith(users: users, openChatUserId: openUserId));
     repository.saveCachedUsers(users);
     repository.zeroUnreadCount(openUserId);
+  }
+
+  void _onUserUnreadCleared(
+    DashboardUserUnreadCleared event,
+    Emitter<DashboardState> emit,
+  ) {
+    if (isClosed) return;
+    final users = state.users.map((user) {
+      if (user.id != event.userId) return user;
+      return user.copyWith(unreadCount: 0);
+    }).toList();
+    emit(state.copyWith(users: users));
+    repository.saveCachedUsers(users);
+    repository.zeroUnreadCount(event.userId);
   }
 
   Future<void> _reconcileUnreadCount(String senderId) async {
