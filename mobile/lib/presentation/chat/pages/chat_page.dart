@@ -267,7 +267,30 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {
       _replyToMessage = message;
     });
-    _inputFocusNode.requestFocus();
+    _inputFocusNode.canRequestFocus = true;
+
+    // If it was already focused, briefly unfocus so focus change triggers the OS keyboard
+    if (_inputFocusNode.hasFocus) {
+      _inputFocusNode.unfocus();
+    }
+
+    // Request focus and tell the platform to show the software keyboard
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _inputFocusNode.canRequestFocus = true;
+      FocusScope.of(context).requestFocus(_inputFocusNode);
+      SystemChannels.textInput.invokeMethod('TextInput.show');
+    });
+
+    // Fallback trigger after drag gestures settle to guarantee keyboard pops up
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (!mounted || _replyToMessage == null) return;
+      _inputFocusNode.canRequestFocus = true;
+      if (!_inputFocusNode.hasFocus) {
+        FocusScope.of(context).requestFocus(_inputFocusNode);
+      }
+      SystemChannels.textInput.invokeMethod('TextInput.show');
+    });
   }
 
   String _getSnippet(MessageModel m) {
@@ -540,7 +563,11 @@ class _ChatPageState extends State<ChatPage> {
     } finally {
       if (selectedAction == 'reply') {
         _inputFocusNode.canRequestFocus = true;
-        _setReplyMessage(message);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _setReplyMessage(message);
+          }
+        });
       } else if (selectedAction == 'unsend') {
         await _showUnsendConfirmationDialog(message);
       } else {
