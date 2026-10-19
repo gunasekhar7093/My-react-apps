@@ -263,7 +263,6 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _setReplyMessage(MessageModel message) {
-    HapticFeedback.lightImpact();
     setState(() {
       _replyToMessage = message;
     });
