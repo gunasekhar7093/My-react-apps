@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/message_model.dart';
 import '../../data/models/user_model.dart';
+import 'background_sync_service.dart';
 
 /// Local offline persistence service for ChatSpace.
 /// Caches user contacts and conversation messages on-device
@@ -548,6 +549,8 @@ class LocalStorageService {
       final file = await _getPendingQueueFile();
       final jsonList = sortedList.map((m) => m.toJson()).toList();
       await _safeWriteFile(file, jsonEncode(jsonList));
+      // Schedule OS background sync when an offline message hits disk
+      BackgroundSyncService.scheduleOfflineSync();
     } catch (_) {}
   }
 
@@ -623,6 +626,8 @@ class LocalStorageService {
       existing.add(partnerId);
       final file = await _getPendingReadReceiptsFile();
       await _safeWriteFile(file, jsonEncode(existing.toList()));
+      // Schedule OS background sync when a read receipt hits disk
+      BackgroundSyncService.scheduleOfflineSync();
     } catch (_) {}
   }
 
@@ -631,6 +636,49 @@ class LocalStorageService {
       final existing = await getPendingReadReceipts();
       if (existing.remove(partnerId)) {
         final file = await _getPendingReadReceiptsFile();
+        await _safeWriteFile(file, jsonEncode(existing.toList()));
+      }
+    } catch (_) {}
+  }
+
+  // ── Pending Deletions Queue ──────────────────────────────────────────────
+
+  Future<File> _getPendingDeletionsFile() async {
+    final dir = await _getCacheDirectory();
+    return File('${dir.path}/pending_deletions.json');
+  }
+
+  Future<Set<String>> getPendingDeletions() async {
+    try {
+      final file = await _getPendingDeletionsFile();
+      if (!await file.exists()) return <String>{};
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return <String>{};
+      final dynamic decoded = jsonDecode(content);
+      if (decoded is List) {
+        return decoded.map((e) => e.toString()).toSet();
+      }
+    } catch (_) {}
+    return <String>{};
+  }
+
+  Future<void> addPendingDeletion(String messageId) async {
+    try {
+      if (messageId.isEmpty) return;
+      final existing = await getPendingDeletions();
+      existing.add(messageId);
+      final file = await _getPendingDeletionsFile();
+      await _safeWriteFile(file, jsonEncode(existing.toList()));
+      // Schedule OS background sync when a deletion hits disk
+      BackgroundSyncService.scheduleOfflineSync();
+    } catch (_) {}
+  }
+
+  Future<void> removePendingDeletion(String messageId) async {
+    try {
+      final existing = await getPendingDeletions();
+      if (existing.remove(messageId)) {
+        final file = await _getPendingDeletionsFile();
         await _safeWriteFile(file, jsonEncode(existing.toList()));
       }
     } catch (_) {}

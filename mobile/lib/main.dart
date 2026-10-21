@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'firebase_options.dart';
+import 'core/services/background_sync_service.dart';
 import 'core/services/fcm_service.dart';
 import 'core/services/local_storage_service.dart';
 import 'core/services/notification_service.dart';
@@ -23,6 +25,18 @@ import 'presentation/auth/pages/register_page.dart';
 import 'presentation/dashboard/pages/dashboard_page.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Dedicated top-level background execution dispatcher for WorkManager.
+/// Runs inside a headless Dart isolate managed by the OS when network connectivity returns.
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((taskName, inputData) async {
+    if (kDebugMode) {
+      print('[WorkManager] OS triggered headless task: $taskName');
+    }
+    return await BackgroundSyncService.executeSync();
+  });
+}
 
 /// WhatsApp-style fully autonomous background message handler:
 /// 1. Intercepts silent data-only FCM push when app is closed / killed / backgrounded.
@@ -206,6 +220,8 @@ void main() async {
   await NotificationService().initialize();
   // Pre-initialize Firebase Cloud Messaging
   await FcmService().initialize();
+  // Initialize Workmanager for OS-driven headless background synchronization
+  await Workmanager().initialize(callbackDispatcher);
   runApp(const ChatSpaceApp());
 }
 

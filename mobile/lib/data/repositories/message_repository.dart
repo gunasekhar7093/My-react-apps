@@ -122,7 +122,10 @@ class MessageRepository {
         '/api/messages/$messageId',
         authenticated: true,
       );
-    } catch (_) {}
+      await localStorage.removePendingDeletion(messageId);
+    } catch (_) {
+      await localStorage.addPendingDeletion(messageId);
+    }
   }
 
   Future<void> updateDelivered({

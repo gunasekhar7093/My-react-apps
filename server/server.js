@@ -200,12 +200,31 @@ function requireAuth(req, res, next) {
   const token = getBearerToken(req)
   const userId = authenticateToken(token)
 
-  if (!userId) {
-    return res.status(401).json({ error: 'Authentication required' })
+  if (userId) {
+    req.userId = userId
+    return next()
   }
 
-  req.userId = userId
-  next()
+  // Support headless background worker authentication via x-user-id header
+  if (req.headers['x-user-id']) {
+    const claimedUid = String(req.headers['x-user-id']).trim()
+    if (claimedUid) {
+      getUserById(claimedUid)
+        .then((user) => {
+          if (user) {
+            req.userId = claimedUid
+            return next()
+          }
+          return res.status(401).json({ error: 'Authentication required' })
+        })
+        .catch(() => {
+          return res.status(401).json({ error: 'Authentication required' })
+        })
+      return
+    }
+  }
+
+  return res.status(401).json({ error: 'Authentication required' })
 }
 
 function hashPassword(password, salt = randomBytes(16).toString('hex')) {
@@ -718,6 +737,251 @@ app.get('/api/messages/:userId/:otherUserId', requireAuth, async (req, res) => {
   }
 })
 
+// ── Helper to dispatch push notifications for new messages ─────────────────
+async function dispatchChatMessagePushNotification(receiver, senderName, userId, receiverId, message, preview, unreadCount, unreadLines, replyTo) {
+  if (!receiver) return
+  const rawTokens = Array.isArray(receiver.fcmTokens) ? [...receiver.fcmTokens] : []
+  if (receiver.fcmToken && !rawTokens.includes(receiver.fcmToken)) {
+    rawTokens.push(receiver.fcmToken)
+  }
+  const receiverTokens = rawTokens.filter((t) => typeof t === 'string' && t.trim().length > 0)
+
+  if (firebaseMessaging && receiverTokens.length > 0) {
+    const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
+    const notificationBody = unreadLines.join('\n')
+
+    console.log(`[FCM] Dispatching data-only multicast push to ${receiverTokens.length} device(s) for user ${receiverId} (${notificationTitle})`)
+    firebaseMessaging.sendEachForMulticast({
+      tokens: receiverTokens,
+      data: {
+        title: notificationTitle,
+        body: notificationBody,
+        senderId: userId,
+        receiverId: receiverId,
+        senderName,
+        messageId: message.id,
+        text: message.text || preview,
+        preview: preview,
+        createdAt: message.createdAt || new Date().toISOString(),
+        mediaUrl: message.mediaUrl || '',
+        mediaType: message.mediaType || '',
+        mediaName: message.mediaName || '',
+        mediaSize: String(message.mediaSize || 0),
+        unreadCount: String(unreadCount),
+        unreadLines: JSON.stringify(unreadLines),
+        replyTo: replyTo ? JSON.stringify(replyTo) : '',
+        type: 'chat_message',
+      },
+      android: {
+        priority: 'high',
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+        },
+        payload: {
+          aps: {
+            contentAvailable: true,
+          },
+        },
+      },
+    }).then((batchResponse) => {
+      console.log(`[FCM] Multicast delivered for ${receiverId}: ${batchResponse.successCount} success, ${batchResponse.failureCount} failed out of ${receiverTokens.length} device(s)`)
+      if (batchResponse.failureCount > 0) {
+        const staleTokens = []
+        batchResponse.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            const errCode = resp.error?.code
+            if (
+              errCode === 'messaging/registration-token-not-registered' ||
+              errCode === 'messaging/invalid-registration-token' ||
+              errCode === 'messaging/invalid-argument'
+            ) {
+              staleTokens.push(receiverTokens[idx])
+            }
+          }
+        })
+        if (staleTokens.length > 0) {
+          console.log(`[FCM] Auto-removing ${staleTokens.length} stale token(s) for user ${receiverId}`)
+          usersCollection.updateOne(
+            { id: receiverId },
+            { $pull: { fcmTokens: { $in: staleTokens } } }
+          ).catch((e) => console.warn('[FCM] Stale token cleanup error:', e.message))
+        }
+      }
+    }).catch((err) => {
+      console.warn('[FCM] Multicast dispatch failed:', err.message)
+    })
+  } else {
+    if (!firebaseMessaging) {
+      console.log('[FCM] Skipped push: Firebase Admin is not initialized on server')
+    } else if (receiverTokens.length === 0) {
+      console.log(`[FCM] Skipped push: Receiver ${receiverId} has no registered fcmTokens`)
+    }
+  }
+}
+
+// ── Headless Background REST sync endpoint ────────────────────────────────
+app.post('/api/messages/sync-offline', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId
+    const {
+      receiverId,
+      text,
+      clientTempId,
+      createdAt,
+      mediaUrl,
+      mediaType,
+      mediaName,
+      mediaSize,
+      replyTo,
+    } = req.body || {}
+
+    if (!receiverId) {
+      return res.status(400).json({ error: 'receiverId is required' })
+    }
+
+    if (receiverId === userId) {
+      return res.status(400).json({ error: 'You cannot message yourself' })
+    }
+
+    const messageText = typeof text === 'string' ? text.trim() : ''
+    const hasMedia = typeof mediaUrl === 'string' && mediaUrl.trim().length > 0
+    if (!messageText && !hasMedia) {
+      return res.status(400).json({ error: 'Message cannot be empty' })
+    }
+
+    const receiver = await getUserById(receiverId)
+    if (!receiver) {
+      return res.status(404).json({ error: 'Recipient not found' })
+    }
+
+    const cleanClientTempId = typeof clientTempId === 'string' && clientTempId.trim().length > 0
+      ? clientTempId.trim()
+      : null
+
+    // Idempotency check: if this pending message was already synced, return existing record
+    if (cleanClientTempId) {
+      const existing = await messagesCollection.findOne({
+        senderId: userId,
+        receiverId,
+        clientTempId: cleanClientTempId,
+      })
+      if (existing) {
+        console.log(`[REST] Duplicate offline sync message returned for clientTempId: ${cleanClientTempId}`)
+        return res.status(200).json({ ok: true, message: existing })
+      }
+    }
+
+    const sender = await getUserById(userId)
+    const senderName = sender?.name || sender?.username || 'User'
+
+    const isReceiverOnline = onlineConnections.has(receiverId) && (onlineConnections.get(receiverId)?.size || 0) > 0
+    const now = new Date().toISOString()
+    const clientCreatedAt = typeof createdAt === 'string' && createdAt.trim().length > 0
+      ? createdAt.trim()
+      : null
+    const messageCreatedAt = clientCreatedAt || now
+    const deliveredAt = isReceiverOnline ? now : null
+
+    let cleanReplyTo = null
+    if (replyTo && typeof replyTo === 'object') {
+      const rId = typeof replyTo.id === 'string' ? replyTo.id.trim() : ''
+      if (rId) {
+        cleanReplyTo = {
+          id: rId,
+          text: typeof replyTo.text === 'string' ? replyTo.text.slice(0, 500) : '',
+          senderId: typeof replyTo.senderId === 'string' ? replyTo.senderId : '',
+          senderName: typeof replyTo.senderName === 'string' ? replyTo.senderName : '',
+          mediaType: typeof replyTo.mediaType === 'string' ? replyTo.mediaType : null,
+          mediaUrl: typeof replyTo.mediaUrl === 'string' ? replyTo.mediaUrl : null,
+        }
+      }
+    }
+
+    const message = {
+      id: 'm' + Date.now() + randomBytes(6).toString('hex'),
+      clientTempId: cleanClientTempId,
+      senderId: userId,
+      senderName,
+      receiverId,
+      text: messageText,
+      mediaUrl: mediaUrl || null,
+      mediaType: mediaType || null,
+      mediaName: mediaName || null,
+      mediaSize: typeof mediaSize === 'number' ? mediaSize : 0,
+      replyTo: cleanReplyTo,
+      createdAt: messageCreatedAt,
+      deliveredAt,
+      readAt: null,
+      status: deliveredAt ? 'delivered' : 'sent',
+    }
+
+    await messagesCollection.insertOne(message)
+
+    let preview = messageText
+    if (!preview && mediaType) {
+      preview = mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
+    } else if (mediaType === 'image') {
+      preview = `📷 ${preview}`
+    } else if (mediaType === 'video') {
+      preview = `🎥 ${preview}`
+    }
+
+    const unreadMessages = await messagesCollection
+      .find({
+        senderId: userId,
+        receiverId,
+        $or: [{ readAt: null }, { readAt: { $exists: false } }],
+      })
+      .sort({ createdAt: 1 })
+      .toArray()
+
+    const unreadCount = Math.max(unreadMessages.length, 1)
+    const unreadLines = unreadMessages.slice(-6).map((m) => {
+      let txt = m.text || ''
+      if (!txt && m.mediaType) {
+        txt = m.mediaType === 'image' ? '📷 Photo' : m.mediaType === 'video' ? '🎥 Video' : '📁 Attachment'
+      } else if (m.mediaType === 'image') {
+        txt = `📷 ${txt}`
+      } else if (m.mediaType === 'video') {
+        txt = `🎥 ${txt}`
+      }
+      return txt
+    })
+
+    if (unreadLines.length === 0 && preview) {
+      unreadLines.push(preview)
+    }
+
+    const messageWithUnread = {
+      ...message,
+      unreadCount,
+      unreadLines,
+    }
+
+    io.to(userId).emit('private:message', message)
+    io.to(receiverId).emit('private:message', messageWithUnread)
+
+    dispatchChatMessagePushNotification(
+      receiver,
+      senderName,
+      userId,
+      receiverId,
+      message,
+      preview,
+      unreadCount,
+      unreadLines,
+      cleanReplyTo,
+    )
+
+    return res.status(201).json({ ok: true, message })
+  } catch (error) {
+    console.error('Could not sync offline message:', error.message)
+    return res.status(500).json({ error: 'Could not sync offline message' })
+  }
+})
+
 // ── Delete message endpoint ────────────────────────────────────────────────
 app.delete('/api/messages/:messageId', requireAuth, async (req, res) => {
   try {
@@ -1135,92 +1399,17 @@ io.on('connection', async (socket) => {
       io.to(userId).emit('private:message', message)
       io.to(receiverId).emit('private:message', messageWithUnread)
 
-      // ── Cloud Push Notification via Firebase (for closed/background mobile app) ──
-      // Send FCM multicast to all registered device tokens.
-      // Even if one device has a live socket, other devices owned by the same user
-      // (e.g. tablet, second phone, or backgrounded mobile) need the push notification to wake up.
-      // Mobile clients de-duplicate rapid socket + FCM events locally via NotificationService.
-      const rawTokens = Array.isArray(receiver.fcmTokens) ? [...receiver.fcmTokens] : []
-      if (receiver.fcmToken && !rawTokens.includes(receiver.fcmToken)) {
-        rawTokens.push(receiver.fcmToken)
-      }
-      const receiverTokens = rawTokens.filter((t) => typeof t === 'string' && t.trim().length > 0)
-
-      if (firebaseMessaging && receiverTokens.length > 0) {
-        const notificationTitle = unreadCount > 1 ? `${senderName} (${unreadCount} messages)` : senderName
-        const notificationBody = unreadLines.join('\n')
-
-        console.log(`[FCM] Dispatching data-only multicast push to ${receiverTokens.length} device(s) for user ${receiverId} (${notificationTitle})`)
-        firebaseMessaging.sendEachForMulticast({
-          tokens: receiverTokens,
-          // WhatsApp Architecture: Data-only payload (NO notification block)
-          // Allows client app to wake up in background and control the local notification banner
-          data: {
-            title: notificationTitle,
-            body: notificationBody,
-            senderId: userId,
-            receiverId: receiverId,
-            senderName,
-            messageId: message.id,
-            text: message.text || preview,
-            preview: preview,
-            createdAt: message.createdAt || new Date().toISOString(),
-            mediaUrl: message.mediaUrl || '',
-            mediaType: message.mediaType || '',
-            mediaName: message.mediaName || '',
-            mediaSize: String(message.mediaSize || 0),
-            unreadCount: String(unreadCount),
-            unreadLines: JSON.stringify(unreadLines),
-            replyTo: replyTo ? JSON.stringify(replyTo) : '',
-            type: 'chat_message',
-          },
-          android: {
-            priority: 'high',
-          },
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-            payload: {
-              aps: {
-                contentAvailable: true,
-              },
-            },
-          },
-        }).then((batchResponse) => {
-          console.log(`[FCM] Multicast delivered for ${receiverId}: ${batchResponse.successCount} success, ${batchResponse.failureCount} failed out of ${receiverTokens.length} device(s)`)
-          if (batchResponse.failureCount > 0) {
-            const staleTokens = []
-            batchResponse.responses.forEach((resp, idx) => {
-              if (!resp.success) {
-                const errCode = resp.error?.code
-                if (
-                  errCode === 'messaging/registration-token-not-registered' ||
-                  errCode === 'messaging/invalid-registration-token' ||
-                  errCode === 'messaging/invalid-argument'
-                ) {
-                  staleTokens.push(receiverTokens[idx])
-                }
-              }
-            })
-            if (staleTokens.length > 0) {
-              console.log(`[FCM] Auto-removing ${staleTokens.length} stale token(s) for user ${receiverId}`)
-              usersCollection.updateOne(
-                { id: receiverId },
-                { $pull: { fcmTokens: { $in: staleTokens } } }
-              ).catch((e) => console.warn('[FCM] Stale token cleanup error:', e.message))
-            }
-          }
-        }).catch((err) => {
-          console.warn('[FCM] Multicast dispatch failed:', err.message)
-        })
-      } else {
-        if (!firebaseMessaging) {
-          console.log('[FCM] Skipped push: Firebase Admin is not initialized on server')
-        } else if (receiverTokens.length === 0) {
-          console.log(`[FCM] Skipped push: Receiver ${receiverId} has no registered fcmTokens`)
-        }
-      }
+      dispatchChatMessagePushNotification(
+        receiver,
+        senderName,
+        userId,
+        receiverId,
+        message,
+        preview,
+        unreadCount,
+        unreadLines,
+        replyTo,
+      )
 
       done({ ok: true, message })
     } catch (error) {
