@@ -19,10 +19,36 @@ class BackgroundSyncService {
   static const String taskName = "syncOfflineDataTask";
   static const String uniqueWorkName = "com.chatspace.offline_sync_task";
 
+  /// In-memory debouncer/throttler flag.
+  /// Prevents redundant OS WorkManager task registrations and OS rate-limits
+  /// when multiple offline messages or read receipts are queued rapidly.
+  static bool _isSyncScheduled = false;
+
+  /// Exposes whether a background sync task has already been scheduled in this session.
+  static bool get isSyncScheduled => _isSyncScheduled;
+
+  /// Resets the sync scheduling throttle state.
+  /// Called when pending outbox data has been flushed or when network presence
+  /// transitions back to a clean online state.
+  static void resetSyncSchedule() {
+    _isSyncScheduled = false;
+    if (kDebugMode) {
+      print('[WorkManager] Reset _isSyncScheduled to false');
+    }
+  }
+
   /// Registers/schedules a persistent background task with the OS.
   /// Configured with NetworkType.connected constraint so the OS monitors network
   /// and automatically triggers this worker even if the app was killed or device restarted.
   static Future<void> scheduleOfflineSync() async {
+    // Skip duplicate registration if a task is already scheduled in this session
+    if (_isSyncScheduled) {
+      if (kDebugMode) {
+        print('[WorkManager] Sync task already scheduled for current session, skipping duplicate registration.');
+      }
+      return;
+    }
+
     try {
       await Workmanager().registerOneOffTask(
         uniqueWorkName,
@@ -32,6 +58,7 @@ class BackgroundSyncService {
         ),
         existingWorkPolicy: ExistingWorkPolicy.keep,
       );
+      _isSyncScheduled = true;
       if (kDebugMode) {
         print('[WorkManager] Successfully registered offline sync task with NetworkType.connected');
       }
@@ -181,6 +208,8 @@ class BackgroundSyncService {
         print('[WorkManager] Top-level failure during executeSync: $e');
       }
       return false;
+    } finally {
+      resetSyncSchedule();
     }
   }
 }

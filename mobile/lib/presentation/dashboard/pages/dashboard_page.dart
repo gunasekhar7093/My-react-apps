@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
+import '../../../core/services/background_sync_service.dart';
 import '../../../core/services/fcm_service.dart';
 import '../../../core/services/local_storage_service.dart';
 import '../../../core/services/notification_service.dart';
@@ -174,7 +175,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final openChatId = _bloc.state.openChatUserId;
       final localStorage = LocalStorageService();
       final allPending = await localStorage.getPendingMessages();
-      if (allPending.isEmpty) return;
+      if (allPending.isEmpty) {
+        BackgroundSyncService.resetSyncSchedule();
+        return;
+      }
 
       for (final pending in allPending) {
         if (!_socket.isConnected) break;
@@ -211,6 +215,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         } finally {
           localStorage.clearMessageInFlight(pending.id);
         }
+      }
+
+      final remaining = await localStorage.getPendingMessages();
+      if (remaining.isEmpty) {
+        BackgroundSyncService.resetSyncSchedule();
       }
     } finally {
       _isFlushingPending = false;

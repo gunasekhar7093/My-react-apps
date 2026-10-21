@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/socket_service.dart';
+import '../../../core/services/background_sync_service.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../data/models/message_model.dart';
 import '../../../data/repositories/message_repository.dart';
@@ -341,7 +342,10 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ...pendingList,
       ]);
 
-      if (queue.isEmpty) return;
+      if (queue.isEmpty) {
+        BackgroundSyncService.resetSyncSchedule();
+        return;
+      }
 
       for (final pending in queue) {
         if (!socket.isConnected) break;
@@ -379,6 +383,14 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         } finally {
           repository.clearMessageInFlight(pending.id);
         }
+      }
+
+      final remaining = await repository.getPendingMessages(
+        userId: userId,
+        otherUserId: otherUserId,
+      );
+      if (remaining.isEmpty) {
+        BackgroundSyncService.resetSyncSchedule();
       }
     } finally {
       _isFlushing = false;

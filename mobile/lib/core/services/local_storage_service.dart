@@ -645,30 +645,32 @@ class LocalStorageService {
 
   Future<File> _getPendingDeletionsFile() async {
     final dir = await _getCacheDirectory();
-    return File('${dir.path}/pending_deletions.json');
+    return File('${dir.path}/pending_deletions_queue.json');
   }
 
-  Future<Set<String>> getPendingDeletions() async {
+  Future<List<String>> getPendingDeletions() async {
     try {
       final file = await _getPendingDeletionsFile();
-      if (!await file.exists()) return <String>{};
+      if (!await file.exists()) return <String>[];
       final content = await file.readAsString();
-      if (content.trim().isEmpty) return <String>{};
+      if (content.trim().isEmpty) return <String>[];
       final dynamic decoded = jsonDecode(content);
       if (decoded is List) {
-        return decoded.map((e) => e.toString()).toSet();
+        return decoded.map((e) => e.toString()).toList();
       }
     } catch (_) {}
-    return <String>{};
+    return <String>[];
   }
 
   Future<void> addPendingDeletion(String messageId) async {
     try {
       if (messageId.isEmpty) return;
       final existing = await getPendingDeletions();
-      existing.add(messageId);
+      if (!existing.contains(messageId)) {
+        existing.add(messageId);
+      }
       final file = await _getPendingDeletionsFile();
-      await _safeWriteFile(file, jsonEncode(existing.toList()));
+      await _safeWriteFile(file, jsonEncode(existing));
       // Schedule OS background sync when a deletion hits disk
       BackgroundSyncService.scheduleOfflineSync();
     } catch (_) {}
@@ -679,7 +681,7 @@ class LocalStorageService {
       final existing = await getPendingDeletions();
       if (existing.remove(messageId)) {
         final file = await _getPendingDeletionsFile();
-        await _safeWriteFile(file, jsonEncode(existing.toList()));
+        await _safeWriteFile(file, jsonEncode(existing));
       }
     } catch (_) {}
   }

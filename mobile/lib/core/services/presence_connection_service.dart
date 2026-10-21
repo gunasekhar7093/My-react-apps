@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import '../network/socket_service.dart';
+import 'background_sync_service.dart';
 
 /// Monitors both device OS network connectivity (Mobile Data / Wi-Fi)
 /// and live Socket.IO connection status.
@@ -35,7 +36,6 @@ class PresenceConnectionService {
     _socketService = socketService;
     if (_isInitialized) return;
     _isInitialized = true;
-
     _connectivitySubscription = _connectivity.onConnectivityChanged.listen(_handleConnectivityResults);
     _connectivity.checkConnectivity().then(_handleConnectivityResults);
 
@@ -59,6 +59,8 @@ class PresenceConnectionService {
         // Connection just restored! Increment reconnect counter so listeners
         // fetch the present status of users from the server.
         reconnectCounter.value++;
+        // Reset sync scheduling state so future offline breaks can safely schedule a new task
+        BackgroundSyncService.resetSyncSchedule();
       }
     }
   }
