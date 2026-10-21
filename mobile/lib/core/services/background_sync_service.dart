@@ -56,11 +56,14 @@ class BackgroundSyncService {
         constraints: Constraints(
           networkType: NetworkType.connected,
         ),
-        existingWorkPolicy: ExistingWorkPolicy.keep,
+        existingWorkPolicy: ExistingWorkPolicy.replace,
+        initialDelay: Duration.zero,
+        backoffPolicy: BackoffPolicy.exponential,
+        backoffPolicyDelay: const Duration(seconds: 10),
       );
       _isSyncScheduled = true;
       if (kDebugMode) {
-        print('[WorkManager] Successfully registered offline sync task with NetworkType.connected');
+        print('[WorkManager] Successfully registered offline sync task with NetworkType.connected (ExistingWorkPolicy.replace)');
       }
     } catch (e) {
       if (kDebugMode) {
@@ -74,19 +77,29 @@ class BackgroundSyncService {
     try {
       WidgetsFlutterBinding.ensureInitialized();
 
-      // 1. Verify session in headless isolate via SharedPreferences
+      // 1. Initialize LocalStorageService first
+      final localStorage = LocalStorageService();
+      await localStorage.initialize();
+
+      // 2. Verify session in headless isolate via SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      final activeUid = prefs.getString(SecureStorageService.activeUidPrefKey);
+      String? activeUid = prefs.getString(SecureStorageService.activeUidPrefKey);
+
+      // Fallback: If activeUid wasn't cached, resolve directly from the queued offline outbox messages
+      if (activeUid == null || activeUid.trim().isEmpty) {
+        final allPending = await localStorage.getPendingMessages();
+        if (allPending.isNotEmpty) {
+          activeUid = allPending.first.senderId;
+          await prefs.setString(SecureStorageService.activeUidPrefKey, activeUid);
+        }
+      }
+
       if (activeUid == null || activeUid.trim().isEmpty) {
         if (kDebugMode) {
-          print('[WorkManager] Dropping background sync: no active user logged in.');
+          print('[WorkManager] Dropping background sync: no active user logged in or pending outbox empty.');
         }
         return true;
       }
-
-      // 2. Initialize LocalStorageService using pre-cached SharedPreferences path (avoids MissingPluginException)
-      final localStorage = LocalStorageService();
-      await localStorage.initialize();
 
       // Attempt to load token if secure storage is accessible in this isolate
       String? token;
@@ -100,10 +113,13 @@ class BackgroundSyncService {
         if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
 
+      bool allSucceeded = true;
       final client = http.Client();
       try {
         // 3. Process Pending Messages Outbox (/api/messages/sync-offline)
-        final pendingMessages = await localStorage.getPendingMessages(userId: activeUid);
+        final allPending = await localStorage.getPendingMessages();
+        final pendingMessages = allPending.where((m) => m.senderId == activeUid).toList();
+
         for (final pending in pendingMessages) {
           try {
             final uri = Uri.parse('${ApiConstants.baseUrl}/api/messages/sync-offline');
@@ -119,11 +135,12 @@ class BackgroundSyncService {
               'replyTo': pending.replyTo?.toJson(),
             });
 
+            // 60-second timeout safely absorbs free-tier Render server wakeups
             final response = await client.post(
               uri,
               headers: authHeaders,
               body: body,
-            ).timeout(const Duration(seconds: 15));
+            ).timeout(const Duration(seconds: 60));
 
             if (response.statusCode == 200 || response.statusCode == 201) {
               final dynamic resJson = jsonDecode(response.body);
@@ -142,11 +159,13 @@ class BackgroundSyncService {
                 }
               }
             } else {
+              allSucceeded = false;
               if (kDebugMode) {
                 print('[WorkManager] Failed syncing message ${pending.id}: HTTP ${response.statusCode}');
               }
             }
           } catch (e) {
+            allSucceeded = false;
             if (kDebugMode) {
               print('[WorkManager] Error sending pending message ${pending.id}: $e');
             }
@@ -161,15 +180,18 @@ class BackgroundSyncService {
             final response = await client.post(
               uri,
               headers: authHeaders,
-            ).timeout(const Duration(seconds: 10));
+            ).timeout(const Duration(seconds: 15));
 
             if (response.statusCode >= 200 && response.statusCode < 300) {
               await localStorage.removePendingReadReceipt(partnerId);
               if (kDebugMode) {
                 print('[WorkManager] Synced read receipt for partner $partnerId');
               }
+            } else {
+              allSucceeded = false;
             }
           } catch (e) {
+            allSucceeded = false;
             if (kDebugMode) {
               print('[WorkManager] Error syncing read receipt for $partnerId: $e');
             }
@@ -184,15 +206,18 @@ class BackgroundSyncService {
             final response = await client.delete(
               uri,
               headers: authHeaders,
-            ).timeout(const Duration(seconds: 10));
+            ).timeout(const Duration(seconds: 15));
 
             if (response.statusCode == 200 || response.statusCode == 204 || response.statusCode == 404) {
               await localStorage.removePendingDeletion(messageId);
               if (kDebugMode) {
                 print('[WorkManager] Synced message deletion for $messageId');
               }
+            } else {
+              allSucceeded = false;
             }
           } catch (e) {
+            allSucceeded = false;
             if (kDebugMode) {
               print('[WorkManager] Error syncing deletion for $messageId: $e');
             }
@@ -202,14 +227,15 @@ class BackgroundSyncService {
         client.close();
       }
 
-      return true;
+      if (allSucceeded) {
+        resetSyncSchedule();
+      }
+      return allSucceeded;
     } catch (e) {
       if (kDebugMode) {
         print('[WorkManager] Top-level failure during executeSync: $e');
       }
       return false;
-    } finally {
-      resetSyncSchedule();
     }
   }
 }

@@ -201,8 +201,6 @@ void main() async {
           }
         }
       } catch (_) {}
-    } else {
-      await prefs.remove(SecureStorageService.activeUidPrefKey);
     }
 
     // Security hardening: ensure no sensitive network bearer tokens remain in plaintext SharedPreferences
