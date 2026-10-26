@@ -451,10 +451,14 @@ function App() {
     }
   }, [socketConnected, selectedUser?.id, user?.id, token])
 
+  const [hasMoreOlder, setHasMoreOlder] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+
   useEffect(() => {
     if (!selectedUser || !user) {
       setMessages([])
       setChatLoading(false)
+      setHasMoreOlder(false)
       return
     }
 
@@ -482,6 +486,7 @@ function App() {
 
         if (!cancelled && requestId === conversationRequestRef.current) {
           const freshMessages = data.messages || []
+          setHasMoreOlder(Boolean(data.hasMore))
           setMessages((current) => {
             if (
               current.length === freshMessages.length &&
@@ -511,6 +516,43 @@ function App() {
       cancelled = true
     }
   }, [selectedUser?.id, user?.id, token])
+
+  async function loadOlderMessages() {
+    if (loadingOlder || !hasMoreOlder || messages.length === 0 || !selectedUser || !user) return
+    setLoadingOlder(true)
+    try {
+      const oldest = messages[0]
+      const beforeQuery = oldest?.createdAt ? `?before=${encodeURIComponent(oldest.createdAt)}` : ''
+      const response = await fetch(
+        API_URL + '/api/messages/' + user.id + '/' + selectedUser.id + beforeQuery,
+        { headers: { Authorization: 'Bearer ' + token } }
+      )
+      if (!response.ok) throw new Error()
+      const data = await response.json()
+      const older = data.messages || []
+      if (older.length === 0) {
+        setHasMoreOlder(false)
+        return
+      }
+      setMessages((current) => {
+        const byId = new Map(older.map((item) => [item.id, item]))
+        current.forEach((item) => byId.set(item.id, item))
+        const next = [...byId.values()].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        )
+        setConversationCache((cache) => ({
+          ...cache,
+          [selectedUser.id]: next,
+        }))
+        return next
+      })
+      setHasMoreOlder(Boolean(data.hasMore))
+    } catch {
+      // ignore
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
 
   async function submitLogin(credentials) {
     setNotice('')
@@ -575,16 +617,32 @@ function App() {
     navigate('/chat/' + encodeURIComponent(userId))
   }
 
-  function sendMessage(e) {
+  function sendMessage(e, replyTo = null) {
     e?.preventDefault()
 
     const trimmed = text.trim()
 
     if (!trimmed || !selectedUser || !socketRef.current?.connected) return
 
+    const payload = {
+      receiverId: selectedUser.id,
+      text: trimmed,
+    }
+
+    if (replyTo && replyTo.id) {
+      payload.replyTo = {
+        id: replyTo.id,
+        text: (replyTo.text || '').slice(0, 500),
+        senderId: replyTo.senderId,
+        senderName: replyTo.senderId === user.id ? 'You' : (replyTo.senderName || selectedUser.name),
+        mediaType: replyTo.mediaType || null,
+        mediaUrl: replyTo.mediaUrl || null,
+      }
+    }
+
     socketRef.current.emit(
       'private:message',
-      { receiverId: selectedUser.id, text: trimmed },
+      payload,
       (result) => {
         if (!result?.ok) {
           setNotice(result?.error || 'Could not send message')
@@ -596,10 +654,10 @@ function App() {
     )
   }
 
-  async function sendMedia({ file, caption }) {
+  async function sendMedia({ file, caption, replyTo = null }) {
     if (!file || !selectedUser || !socketRef.current?.connected) return
 
-    setNotice('Uploading media to MongoDB…')
+    setNotice('Uploading media…')
     try {
       const formData = new FormData()
       formData.append('file', file)
@@ -615,16 +673,29 @@ function App() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to upload media')
 
+      const payload = {
+        receiverId: selectedUser.id,
+        text: (caption || '').trim(),
+        mediaUrl: data.mediaUrl,
+        mediaType: data.mediaType,
+        mediaName: data.mediaName,
+        mediaSize: data.mediaSize,
+      }
+
+      if (replyTo && replyTo.id) {
+        payload.replyTo = {
+          id: replyTo.id,
+          text: (replyTo.text || '').slice(0, 500),
+          senderId: replyTo.senderId,
+          senderName: replyTo.senderId === user.id ? 'You' : (replyTo.senderName || selectedUser.name),
+          mediaType: replyTo.mediaType || null,
+          mediaUrl: replyTo.mediaUrl || null,
+        }
+      }
+
       socketRef.current.emit(
         'private:message',
-        {
-          receiverId: selectedUser.id,
-          text: (caption || '').trim(),
-          mediaUrl: data.mediaUrl,
-          mediaType: data.mediaType,
-          mediaName: data.mediaName,
-          mediaSize: data.mediaSize,
-        },
+        payload,
         (result) => {
           if (!result?.ok) {
             setNotice(result?.error || 'Could not send message')
@@ -781,6 +852,9 @@ function App() {
               apiUrl={API_URL}
               token={token}
               unsendMessage={unsendMessage}
+              hasMoreOlder={hasMoreOlder}
+              loadingOlder={loadingOlder}
+              loadOlderMessages={loadOlderMessages}
               onBack={() => navigate('/dashboard')}
             />
           </ProtectedRoute>

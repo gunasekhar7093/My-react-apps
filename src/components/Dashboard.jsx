@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { getAvatarGradient } from '../utils/theme'
 
 function formatLastSeen(lastSeenAt) {
   if (!lastSeenAt) return 'Offline'
@@ -25,12 +26,14 @@ const Icon = ({ name, size = 20 }) => {
     users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
     arrow: <><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></>,
     logout: <><path d="M10 17l5-5-5-5" /><path d="M15 12H3" /><path d="M21 3v18" /></>,
+    check: <polyline points="20 6 9 17 4 12" />,
   }
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
 
 export default function Dashboard({ user, users, search, setSearch, onlineCount, openUser, unreadCounts = {}, socketConnected, onLogout }) {
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
+  const [activeFilter, setActiveFilter] = useState('all') // 'all' | 'online' | 'unread'
 
   useEffect(() => {
     if (!showLogoutDialog) return
@@ -57,9 +60,20 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
     return a.name.localeCompare(b.name)
   })
 
-  const filteredUsers = query
-    ? sortedUsers.filter((item) => item.name.toLowerCase().includes(query) || item.username.toLowerCase().includes(query))
-    : sortedUsers
+  const unreadUsersCount = users.filter((u) => (unreadCounts[u.id] || 0) > 0).length
+
+  const filteredUsers = sortedUsers.filter((item) => {
+    // 1. Search text filter
+    if (query) {
+      const matches = item.name.toLowerCase().includes(query) || item.username.toLowerCase().includes(query)
+      if (!matches) return false
+    }
+
+    // 2. Tab chips filter
+    if (activeFilter === 'online') return item.status === 'online'
+    if (activeFilter === 'unread') return (unreadCounts[item.id] || 0) > 0
+    return true
+  })
 
   return (
     <main className="app-screen dashboard-screen">
@@ -71,7 +85,12 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
         <div className="header-actions">
           <div className={socketConnected ? 'connection-status online' : 'connection-status'}><i />{socketConnected ? 'Connected' : 'Connecting'}</div>
           <div className="current-user">
-            <span className="user-avatar">{user.name?.charAt(0).toUpperCase()}</span>
+            <span
+              className="user-avatar"
+              style={{ background: getAvatarGradient(user.id || user.name) }}
+            >
+              {user.name?.charAt(0).toUpperCase()}
+            </span>
             <span>{user.name}</span>
           </div>
           <button className="header-button" onClick={() => setShowLogoutDialog(true)}><Icon name="logout" size={17} /><span>Log out</span></button>
@@ -91,28 +110,77 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
           </div>
         </div>
 
-        <div className="dashboard-toolbar">
-          <div className="dashboard-search">
-            <Icon name="search" size={20} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or email" aria-label="Search people" />
-            {search && <button className="search-clear" onClick={() => setSearch('')} aria-label="Clear search">×</button>}
+        <div className="dashboard-toolbar-group">
+          <div className="dashboard-toolbar">
+            <div className="dashboard-search">
+              <Icon name="search" size={20} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search people by name or email…"
+                aria-label="Search people"
+              />
+              {search && <button className="search-clear" onClick={() => setSearch('')} aria-label="Clear search">×</button>}
+            </div>
+            <span className="result-count">{filteredUsers.length} {filteredUsers.length === 1 ? 'person' : 'people'}</span>
           </div>
-          <span className="result-count">{filteredUsers.length} {filteredUsers.length === 1 ? 'result' : 'results'}</span>
+
+          {/* Filter Chips matching mobile app */}
+          <div className="dashboard-filter-chips">
+            <button
+              type="button"
+              className={`filter-chip ${activeFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('all')}
+            >
+              <span>All</span>
+              <span className="chip-badge">{users.length}</span>
+            </button>
+
+            <button
+              type="button"
+              className={`filter-chip ${activeFilter === 'online' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('online')}
+            >
+              <i className="chip-dot online" />
+              <span>Online</span>
+              <span className="chip-badge">{onlineCount}</span>
+            </button>
+
+            <button
+              type="button"
+              className={`filter-chip ${activeFilter === 'unread' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('unread')}
+            >
+              <span>Unread</span>
+              {unreadUsersCount > 0 && <span className="chip-badge unread">{unreadUsersCount}</span>}
+            </button>
+          </div>
         </div>
 
         <div className="user-grid">
           {filteredUsers.map((item) => (
             <button className="user-card" key={item.id} onClick={() => openUser(item.id)}>
               <span className="user-card-avatar">
-                <span className="large-avatar">{item.name?.charAt(0).toUpperCase()}</span>
+                <span
+                  className="large-avatar"
+                  style={{ background: getAvatarGradient(item.id || item.name) }}
+                >
+                  {item.name?.charAt(0).toUpperCase()}
+                </span>
                 <i className={item.status === 'online' ? 'presence-dot online' : 'presence-dot'} />
               </span>
               <span className="user-card-info">
                 <strong>{item.name}</strong>
-                <small>{item.status === 'online' ? 'Available now' : formatLastSeen(item.lastSeenAt)}</small>
+                <small className={item.status === 'online' ? 'status-online' : ''}>
+                  {item.status === 'online' ? 'Available now' : formatLastSeen(item.lastSeenAt)}
+                </small>
               </span>
               <span className="user-card-actions">
-                {unreadCounts[item.id] > 0 && <span className="unread-badge">{unreadCounts[item.id] > 99 ? '99+' : unreadCounts[item.id]}</span>}
+                {unreadCounts[item.id] > 0 && (
+                  <span className="unread-badge">
+                    {unreadCounts[item.id] > 99 ? '99+' : unreadCounts[item.id]}
+                  </span>
+                )}
                 <span className="user-arrow"><Icon name="arrow" size={19} /></span>
               </span>
             </button>
@@ -120,12 +188,33 @@ export default function Dashboard({ user, users, search, setSearch, onlineCount,
           {!filteredUsers.length && (
             <div className="empty-state">
               <div className="empty-icon"><Icon name="users" size={24} /></div>
-              <strong>{users.length ? 'No people found' : 'Your people list is empty'}</strong>
-              <span>{users.length ? 'Try another name or email address.' : 'Create another account to start chatting.'}</span>
+              <strong>
+                {query
+                  ? 'No people found'
+                  : activeFilter === 'online'
+                  ? 'No one is online right now'
+                  : activeFilter === 'unread'
+                  ? 'No unread messages'
+                  : users.length
+                  ? 'No people found'
+                  : 'Your people list is empty'}
+              </strong>
+              <span>
+                {query
+                  ? 'Try another name or email address.'
+                  : activeFilter === 'online'
+                  ? 'Check back later or message anyone to reach them.'
+                  : activeFilter === 'unread'
+                  ? "You're all caught up with your conversations!"
+                  : users.length
+                  ? 'Try clearing the search or filter.'
+                  : 'Create another account to start chatting.'}
+              </span>
             </div>
           )}
         </div>
       </section>
+
       {showLogoutDialog && (
         <div
           className="dialog-backdrop"

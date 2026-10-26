@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { getAvatarGradient, formatDateBadge, formatBytes } from '../utils/theme'
 
 function formatLastSeen(lastSeenAt) {
   if (!lastSeenAt) return 'Offline'
@@ -26,8 +27,14 @@ const Icon = ({ name, size = 20 }) => {
     clip: <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l7.88-7.88" />,
     close: <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>,
     video: <><path d="m22 8-6 4 6 4V8Z" /><rect width="14" height="12" x="2" y="6" rx="2" ry="2" /></>,
+    photo: <><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></>,
+    camera: <><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /><circle cx="12" cy="13" r="3" /></>,
     download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></>,
     trash: <><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></>,
+    reply: <><polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 0 0-4-4H4" /></>,
+    copy: <><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></>,
+    check: <polyline points="20 6 9 17 4 12" />,
+    chevronDown: <polyline points="6 9 12 15 18 9" />,
   }
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
@@ -44,12 +51,18 @@ export default function ChatScreen({
   sendMessage,
   sendMedia,
   unsendMessage,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  loadOlderMessages,
   apiUrl = '',
   token = '',
   onBack,
 }) {
   const chatBodyRef = useRef(null)
   const fileInputRef = useRef(null)
+  const cameraInputRef = useRef(null)
+  const textInputRef = useRef(null)
+  const messageRefs = useRef({})
   const knownMessageIdsRef = useRef(new Set())
   const initializedMessagesRef = useRef(false)
   const previousMessageCountRef = useRef(0)
@@ -62,6 +75,22 @@ export default function ChatScreen({
   const [uploading, setUploading] = useState(false)
   const [activeMediaModal, setActiveMediaModal] = useState(null)
   const [downloading, setDownloading] = useState(false)
+
+  // Reply & quoting state matching mobile
+  const [replyToMessage, setReplyToMessage] = useState(null)
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null)
+
+  // Message action state & unsend confirmation modal
+  const [unsendTargetMessage, setUnsendTargetMessage] = useState(null)
+  const [copyFeedbackId, setCopyFeedbackId] = useState(null)
+
+  // Floating scroll-to-bottom and new message indicator
+  const [showScrollBottom, setShowScrollBottom] = useState(false)
+  const [hasNewScrolledMessages, setHasNewScrolledMessages] = useState(false)
+
+  // Attachment popup menu and drag-and-drop
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   function getMediaSrc(mediaUrl) {
     if (!mediaUrl) return null
@@ -79,6 +108,19 @@ export default function ChatScreen({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [activeMediaModal])
+
+  // Global escape to cancel reply or close modals
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (showAttachmentMenu) setShowAttachmentMenu(false)
+        else if (replyToMessage) setReplyToMessage(null)
+        else if (unsendTargetMessage) setUnsendTargetMessage(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showAttachmentMenu, replyToMessage, unsendTargetMessage])
 
   async function downloadActiveMedia() {
     if (!activeMediaModal?.url || downloading) return
@@ -108,6 +150,7 @@ export default function ChatScreen({
     }
   }
 
+  // Animate newly arriving messages
   useEffect(() => {
     if (chatLoading) return
 
@@ -140,30 +183,66 @@ export default function ChatScreen({
     knownMessageIdsRef.current = currentIds
   }, [messages, chatLoading, selectedUser?.id])
 
+  // Reset when conversation changes
   useEffect(() => {
     knownMessageIdsRef.current = new Set()
     initializedMessagesRef.current = false
     previousMessageCountRef.current = 0
     initialScrollRef.current = true
     isNearBottomRef.current = true
+    setShowScrollBottom(false)
+    setHasNewScrolledMessages(false)
     setAnimatedMessageIds(new Set())
     setSelectedFile(null)
     setFilePreview(null)
+    setReplyToMessage(null)
+    setHighlightedMessageId(null)
+    setShowAttachmentMenu(false)
   }, [selectedUser?.id])
 
   const handleScroll = () => {
     const container = chatBodyRef.current
     if (!container) return
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    isNearBottomRef.current = distanceFromBottom < 120
+    const nearBottom = distanceFromBottom < 140
+    isNearBottomRef.current = nearBottom
+    setShowScrollBottom(!nearBottom)
+
+    if (nearBottom) {
+      setHasNewScrolledMessages(false)
+    }
+
+    // Infinite scroll: load older messages when reaching near top
+    if (container.scrollTop < 40 && hasMoreOlder && !loadingOlder && loadOlderMessages) {
+      const prevScrollHeight = container.scrollHeight
+      loadOlderMessages().then(() => {
+        // Maintain scroll position after prepending older messages
+        requestAnimationFrame(() => {
+          if (container) {
+            const heightDiff = container.scrollHeight - prevScrollHeight
+            container.scrollTop += heightDiff
+          }
+        })
+      })
+    }
   }
 
+  const scrollToBottom = (smooth = true) => {
+    const container = chatBodyRef.current
+    if (!container) return
+    if (smooth) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+    } else {
+      container.scrollTop = container.scrollHeight
+    }
+    setHasNewScrolledMessages(false)
+  }
+
+  // Scroll to bottom when messages update
   useEffect(() => {
     if (!chatBodyRef.current || chatLoading) return
-
     const container = chatBodyRef.current
 
-    // Case 1: Initial conversation open / first load with messages
     if (initialScrollRef.current) {
       if (messages.length > 0) {
         requestAnimationFrame(() => {
@@ -179,37 +258,49 @@ export default function ChatScreen({
 
     const previousCount = previousMessageCountRef.current
     const currentCount = messages.length
-
-    // Always update recorded message count
     previousMessageCountRef.current = currentCount
 
-    // If message count did not increase (e.g. background sync or re-render), never auto-scroll
-    if (currentCount <= previousCount) {
-      return
-    }
+    if (currentCount <= previousCount) return
 
-    // Case 2: New message(s) arrived
     const latestMessage = messages[messages.length - 1]
     const isSentByMe = latestMessage?.senderId === user?.id
 
-    // Only scroll to bottom if the current user sent the message or was already near the bottom
     if (isSentByMe || isNearBottomRef.current) {
       requestAnimationFrame(() => {
         if (!container) return
-        container.scrollTo({
-          top: container.scrollHeight,
-          behavior: 'smooth',
-        })
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
         isNearBottomRef.current = true
       })
+    } else {
+      setHasNewScrolledMessages(true)
     }
   }, [messages, chatLoading, selectedUser?.id, user?.id])
+
+  // Smooth scroll to quoted target message and highlight it
+  function handleQuotedMessageClick(quotedId) {
+    if (!quotedId) return
+    const targetEl = messageRefs.current[quotedId]
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setHighlightedMessageId(quotedId)
+      window.setTimeout(() => {
+        setHighlightedMessageId((curr) => (curr === quotedId ? null : curr))
+      }, 1600)
+    } else {
+      // Message not found in DOM
+      alert('Original message is not in recent history or has been unsent.')
+    }
+  }
 
   function handleFileSelect(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    processSelectedFile(file)
+  }
 
+  function processSelectedFile(file) {
     setSelectedFile(file)
+    setShowAttachmentMenu(false)
     if (file.type.startsWith('image/')) {
       const reader = new FileReader()
       reader.onload = (event) => setFilePreview(event.target.result)
@@ -217,66 +308,201 @@ export default function ChatScreen({
     } else {
       setFilePreview(null)
     }
+    // Focus text input for caption
+    window.setTimeout(() => textInputRef.current?.focus(), 100)
   }
 
   function clearSelectedFile() {
     setSelectedFile(null)
     setFilePreview(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+    if (cameraInputRef.current) cameraInputRef.current.value = ''
+  }
+
+  // Clipboard paste support (Ctrl+V) for images/screenshots
+  useEffect(() => {
+    function handlePaste(e) {
+      const items = e.clipboardData?.items
+      if (!items) return
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          const file = items[i].getAsFile()
+          if (file && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+            e.preventDefault()
+            processSelectedFile(file)
+            break
+          }
+        }
+      }
+    }
+
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [])
+
+  // Drag and drop file handling
+  function handleDragOver(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }
+
+  function handleDragLeave(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+  }
+
+  function handleDrop(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    const file = e.dataTransfer?.files?.[0]
+    if (file && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+      processSelectedFile(file)
+    }
+  }
+
+  // Copy text or media link
+  async function copyMessageContent(message) {
+    const textToCopy = message.text || message.mediaUrl || ''
+    if (!textToCopy) return
+    try {
+      await navigator.clipboard.writeText(textToCopy)
+      setCopyFeedbackId(message.id)
+      window.setTimeout(() => {
+        setCopyFeedbackId((curr) => (curr === message.id ? null : curr))
+      }, 1500)
+    } catch {
+      // fallback
+    }
+  }
+
+  function triggerReply(message) {
+    setReplyToMessage(message)
+    setShowAttachmentMenu(false)
+    window.setTimeout(() => textInputRef.current?.focus(), 50)
   }
 
   async function handleFormSubmit(e) {
     e.preventDefault()
 
+    const currentReply = replyToMessage
+
     if (selectedFile) {
       if (uploading) return
       setUploading(true)
       try {
-        await sendMedia({ file: selectedFile, caption: text })
+        await sendMedia({ file: selectedFile, caption: text, replyTo: currentReply })
         clearSelectedFile()
         setText('')
+        setReplyToMessage(null)
       } catch {
-        // notice is handled by App.jsx
+        // notice handled by App.jsx
       } finally {
         setUploading(false)
       }
     } else {
-      sendMessage(e)
+      if (!text.trim()) return
+      sendMessage(e, currentReply)
+      setReplyToMessage(null)
     }
   }
 
   if (!selectedUser) {
     return (
       <main className="app-screen">
-        <header className="chat-header"><button className="back-button" onClick={onBack}><Icon name="arrow" size={21} /></button><strong>ChatSpace</strong></header>
-        <div className="empty-chat"><strong>User not found</strong><button className="primary-button small" onClick={onBack}>Back to people</button></div>
+        <header className="chat-header">
+          <button className="back-button" onClick={onBack} aria-label="Back to people">
+            <Icon name="arrow" size={21} />
+          </button>
+          <strong>ChatSpace</strong>
+        </header>
+        <div className="empty-chat">
+          <strong>User not found</strong>
+          <button className="primary-button small" onClick={onBack}>Back to people</button>
+        </div>
       </main>
     )
   }
 
   return (
-    <main className="app-screen chat-screen">
+    <main
+      className={`app-screen chat-screen ${isDragOver ? 'drag-over' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag & drop visual dropzone overlay */}
+      {isDragOver && (
+        <div className="drag-drop-overlay">
+          <div className="drag-drop-card">
+            <Icon name="photo" size={44} />
+            <strong>Drop photo or video here</strong>
+            <span>Add it directly to your conversation</span>
+          </div>
+        </div>
+      )}
+
       <header className="chat-header">
-        <button className="back-button" onClick={onBack} aria-label="Back to people"><Icon name="arrow" size={21} /></button>
+        <button className="back-button" onClick={onBack} aria-label="Back to people">
+          <Icon name="arrow" size={21} />
+        </button>
         <span className="chat-avatar-wrap">
-          <span className="large-avatar">{selectedUser.name?.charAt(0).toUpperCase()}</span>
+          <span
+            className="large-avatar"
+            style={{ background: getAvatarGradient(selectedUser.id || selectedUser.name) }}
+          >
+            {selectedUser.name?.charAt(0).toUpperCase()}
+          </span>
           <i className={selectedUser.status === 'online' ? 'presence-dot online' : 'presence-dot'} />
         </span>
         <div className="chat-user">
           <strong>{selectedUser.name}</strong>
-          <small className={selectedUser.status === 'online' ? 'status-online' : ''}>{selectedUser.status === 'online' ? 'Active now' : formatLastSeen(selectedUser.lastSeenAt)}</small>
+          <small className={selectedUser.status === 'online' ? 'status-online' : ''}>
+            {selectedUser.status === 'online' ? 'Active now' : formatLastSeen(selectedUser.lastSeenAt)}
+          </small>
         </div>
-        <div className={socketConnected ? 'connection-status online chat-connection' : 'connection-status chat-connection'}><i />{socketConnected ? 'Connected' : 'Connecting'}</div>
+        <div className={socketConnected ? 'connection-status online chat-connection' : 'connection-status chat-connection'}>
+          <i />{socketConnected ? 'Connected' : 'Connecting'}
+        </div>
       </header>
 
       <section className="chat-body" ref={chatBodyRef} onScroll={handleScroll}>
         {notice && <div className="chat-notice">{notice}</div>}
+
+        {/* Older messages pagination header */}
+        {hasMoreOlder && (
+          <div className="load-older-bar">
+            {loadingOlder ? (
+              <span className="loading-older-text">Loading older messages…</span>
+            ) : (
+              <button
+                type="button"
+                className="load-older-btn"
+                onClick={loadOlderMessages}
+              >
+                Load older messages
+              </button>
+            )}
+          </div>
+        )}
+
         {chatLoading ? (
-          <div className="empty-chat"><div className="chat-loading-dot" /><span>Loading conversation…</span></div>
+          <div className="empty-chat">
+            <div className="chat-loading-dot" />
+            <span>Loading conversation…</span>
+          </div>
         ) : messages.length === 0 ? (
           <div className="empty-chat">
-            <span className="empty-chat-avatar">{selectedUser.name?.charAt(0).toUpperCase()}</span>
-            <strong>Start a conversation with {selectedUser.name}</strong>
+            <span
+              className="empty-chat-avatar"
+              style={{ background: getAvatarGradient(selectedUser.id || selectedUser.name) }}
+            >
+              {selectedUser.name?.charAt(0).toUpperCase()}
+            </span>
+            <strong>Say hello to {selectedUser.name}!</strong>
             <span>Send the first message or photo below.</span>
           </div>
         ) : (
@@ -286,31 +512,84 @@ export default function ChatScreen({
               const previousDate = index > 0 ? new Date(messages[index - 1].createdAt) : null
               const isNewDate = !previousDate || itemDate.toDateString() !== previousDate.toDateString()
               const mediaSrc = getMediaSrc(item.mediaUrl)
+              const isMine = item.senderId === user.id
+              const isHighlighted = highlightedMessageId === item.id
 
               return (
-                <div key={item.id}>
+                <div
+                  key={item.id}
+                  ref={(el) => {
+                    if (el) messageRefs.current[item.id] = el
+                    else delete messageRefs.current[item.id]
+                  }}
+                >
                   {isNewDate && (
                     <div className="chat-date-divider">
-                      <span>{itemDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                      <span>{formatDateBadge(item.createdAt)}</span>
                     </div>
                   )}
-                  <div className={item.senderId === user.id ? 'message-line mine' : 'message-line'}>
-                    {item.senderId === user.id && unsendMessage && (
+
+                  <div className={`message-line ${isMine ? 'mine' : 'theirs'} ${isHighlighted ? 'highlighted-line' : ''}`}>
+                    {/* Hover Message Action Pill */}
+                    <div className="message-action-toolbar">
                       <button
                         type="button"
-                        className="unsend-btn"
-                        title="Unsend message"
-                        aria-label="Unsend message"
-                        onClick={() => {
-                          if (window.confirm('Unsend this message for everyone?')) {
-                            unsendMessage(item.id)
-                          }
-                        }}
+                        className="msg-action-btn"
+                        title="Reply to message"
+                        aria-label="Reply to message"
+                        onClick={() => triggerReply(item)}
                       >
-                        <Icon name="trash" size={14} />
+                        <Icon name="reply" size={14} />
                       </button>
-                    )}
-                    <div className={animatedMessageIds.has(item.id) ? 'message message-new' : 'message'}>
+
+                      <button
+                        type="button"
+                        className="msg-action-btn"
+                        title={copyFeedbackId === item.id ? 'Copied!' : 'Copy'}
+                        aria-label="Copy message"
+                        onClick={() => copyMessageContent(item)}
+                      >
+                        {copyFeedbackId === item.id ? <Icon name="check" size={14} /> : <Icon name="copy" size={14} />}
+                      </button>
+
+                      {isMine && unsendMessage && (
+                        <button
+                          type="button"
+                          className="msg-action-btn unsend"
+                          title="Unsend message"
+                          aria-label="Unsend message"
+                          onClick={() => setUnsendTargetMessage(item)}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className={`message ${animatedMessageIds.has(item.id) ? 'message-new' : ''} ${isHighlighted ? 'message-highlight' : ''}`}>
+                      {/* Quoted Reply Section matching mobile */}
+                      {item.replyTo && (
+                        <div
+                          className={`quoted-message-box ${isMine ? 'mine' : 'theirs'}`}
+                          onClick={() => handleQuotedMessageClick(item.replyTo.id)}
+                          role="button"
+                          tabIndex={0}
+                          title="Click to view original message"
+                        >
+                          <div className="quoted-sender">
+                            {item.replyTo.senderId === user.id ? 'You' : (item.replyTo.senderName || selectedUser.name)}
+                          </div>
+                          <div className="quoted-snippet">
+                            {item.replyTo.mediaType && (
+                              <span className="quoted-media-tag">
+                                {item.replyTo.mediaType === 'image' ? '📷 Photo' : item.replyTo.mediaType === 'video' ? '🎥 Video' : '📁 Attachment'}
+                              </span>
+                            )}
+                            {item.replyTo.text && <span>{item.replyTo.text}</span>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Attached Media Display */}
                       {mediaSrc && (
                         <div className="message-media-wrap">
                           {item.mediaType === 'video' ? (
@@ -334,18 +613,20 @@ export default function ChatScreen({
                                   type: item.mediaType || 'image',
                                   caption: item.text || '',
                                   date: itemDate,
-                                  senderName: item.senderId === user.id ? 'You' : selectedUser.name,
-                                  avatar: (item.senderId === user.id ? user.name : selectedUser.name)?.charAt(0)?.toUpperCase() || '?',
+                                  senderName: isMine ? 'You' : selectedUser.name,
+                                  avatar: (isMine ? user.name : selectedUser.name)?.charAt(0)?.toUpperCase() || '?',
                                 })
                               }
                             />
                           )}
                         </div>
                       )}
-                      {item.text && <span>{item.text}</span>}
+
+                      {item.text && <span className="message-text">{item.text}</span>}
+
                       <small className="message-meta">
                         <span>{itemDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
-                        {item.senderId === user.id && (
+                        {isMine && (
                           <span
                             className={`msg-status-ticks ${item.readAt ? 'read' : item.deliveredAt ? 'delivered' : 'sent'}`}
                             title={item.readAt ? 'Read (Two White Ticks)' : item.deliveredAt ? 'Delivered (Two Gray Ticks)' : 'Sent (One Gray Tick)'}
@@ -361,7 +642,51 @@ export default function ChatScreen({
             })}
           </div>
         )}
+
+        {/* Floating Quick Scroll to Bottom Button */}
+        {showScrollBottom && (
+          <button
+            type="button"
+            className="scroll-to-bottom-btn"
+            onClick={() => scrollToBottom(true)}
+            aria-label="Scroll to newest messages"
+            title="Scroll to bottom"
+          >
+            {hasNewScrolledMessages && <span className="scroll-bottom-badge" />}
+            <Icon name="chevronDown" size={20} />
+          </button>
+        )}
       </section>
+
+      {/* Replying Banner Dock matching mobile */}
+      {replyToMessage && (
+        <div className="reply-preview-dock">
+          <div className="reply-preview-border" />
+          <div className="reply-preview-content">
+            <div className="reply-preview-header">
+              <Icon name="reply" size={13} />
+              <strong>Replying to {replyToMessage.senderId === user.id ? 'You' : (replyToMessage.senderName || selectedUser.name)}</strong>
+            </div>
+            <div className="reply-preview-snippet">
+              {replyToMessage.mediaType && (
+                <span className="reply-preview-media">
+                  {replyToMessage.mediaType === 'image' ? '📷 Photo' : replyToMessage.mediaType === 'video' ? '🎥 Video' : '📁 Attachment'}
+                </span>
+              )}
+              {replyToMessage.text ? replyToMessage.text : (replyToMessage.mediaName || 'Media')}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="reply-preview-close"
+            onClick={() => setReplyToMessage(null)}
+            aria-label="Cancel reply"
+            title="Cancel reply (Esc)"
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Selected media file preview banner */}
       {selectedFile && (
@@ -373,7 +698,7 @@ export default function ChatScreen({
           )}
           <div className="media-preview-info">
             <strong>{selectedFile.name}</strong>
-            <small>{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</small>
+            <small>{formatBytes(selectedFile.size)}</small>
           </div>
           <button type="button" className="media-preview-clear" onClick={clearSelectedFile} aria-label="Remove attached file">
             <Icon name="close" size={16} />
@@ -381,7 +706,9 @@ export default function ChatScreen({
         </div>
       )}
 
+      {/* Message input dock */}
       <form className="message-box" onSubmit={handleFormSubmit}>
+        {/* Hidden file inputs */}
         <input
           type="file"
           ref={fileInputRef}
@@ -389,21 +716,81 @@ export default function ChatScreen({
           style={{ display: 'none' }}
           onChange={handleFileSelect}
         />
-        <button
-          type="button"
-          className="attachment-button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!socketConnected || uploading}
-          aria-label="Attach photo or video"
-          title="Share photo or video"
-        >
-          <Icon name="clip" size={20} />
-        </button>
+        <input
+          type="file"
+          ref={cameraInputRef}
+          accept="image/*"
+          capture="environment"
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+        />
+
+        {/* Attachment menu trigger */}
+        <div className="attachment-menu-wrap">
+          <button
+            type="button"
+            className={`attachment-button ${showAttachmentMenu ? 'active' : ''}`}
+            onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
+            disabled={!socketConnected || uploading}
+            aria-label="Attach media"
+            title="Share photo, video, or camera"
+          >
+            <Icon name="clip" size={20} />
+          </button>
+
+          {/* Attachment Options Popup matching mobile */}
+          {showAttachmentMenu && (
+            <div className="attachment-dropdown" role="menu">
+              <button
+                type="button"
+                className="attachment-option"
+                onClick={() => {
+                  setShowAttachmentMenu(false)
+                  if (fileInputRef.current) {
+                    fileInputRef.current.accept = 'image/*'
+                    fileInputRef.current.click()
+                  }
+                }}
+              >
+                <div className="option-icon photo"><Icon name="photo" size={18} /></div>
+                <span>Photos</span>
+              </button>
+
+              <button
+                type="button"
+                className="attachment-option"
+                onClick={() => {
+                  setShowAttachmentMenu(false)
+                  if (fileInputRef.current) {
+                    fileInputRef.current.accept = 'video/*'
+                    fileInputRef.current.click()
+                  }
+                }}
+              >
+                <div className="option-icon video"><Icon name="video" size={18} /></div>
+                <span>Videos</span>
+              </button>
+
+              <button
+                type="button"
+                className="attachment-option"
+                onClick={() => {
+                  setShowAttachmentMenu(false)
+                  cameraInputRef.current?.click()
+                }}
+              >
+                <div className="option-icon camera"><Icon name="camera" size={18} /></div>
+                <span>Camera</span>
+              </button>
+            </div>
+          )}
+        </div>
 
         <input
+          ref={textInputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={selectedFile ? 'Add a caption…' : 'Write a message…'}
+          placeholder={selectedFile ? 'Add a caption…' : replyToMessage ? 'Write a reply…' : 'Write a message…'}
           disabled={!socketConnected || uploading}
           autoComplete="off"
         />
@@ -425,7 +812,53 @@ export default function ChatScreen({
         </button>
       </form>
 
-      {/* Instagram-style In-App Photo & Video Preview */}
+      {/* Styled Unsend Confirmation Dialog matching mobile */}
+      {unsendTargetMessage && (
+        <div
+          className="dialog-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setUnsendTargetMessage(null)
+          }}
+        >
+          <section
+            className="logout-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unsend-dialog-title"
+          >
+            <div className="logout-dialog-icon unsend-icon">
+              <Icon name="trash" size={22} />
+            </div>
+            <h2 id="unsend-dialog-title">Unsend this message?</h2>
+            <p>
+              This will remove the message for everyone in the chat.
+            </p>
+            <div className="logout-dialog-actions">
+              <button
+                type="button"
+                className="dialog-cancel"
+                onClick={() => setUnsendTargetMessage(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dialog-confirm unsend-confirm"
+                onClick={() => {
+                  const targetId = unsendTargetMessage.id
+                  setUnsendTargetMessage(null)
+                  unsendMessage(targetId)
+                }}
+              >
+                Unsend
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Full-Screen Instagram-Style In-App Photo & Video Preview */}
       {activeMediaModal && (
         <div
           className="insta-preview-overlay"
@@ -433,7 +866,6 @@ export default function ChatScreen({
           role="dialog"
           aria-modal="true"
         >
-          {/* Top Bar with Sender Info and Close Button */}
           <div className="insta-preview-topbar" onClick={(e) => e.stopPropagation()}>
             <div className="insta-preview-user">
               <span className="insta-preview-avatar">{activeMediaModal.avatar}</span>
@@ -469,7 +901,6 @@ export default function ChatScreen({
             </div>
           </div>
 
-          {/* Centered Media Content */}
           <div className="insta-preview-stage" onClick={() => setActiveMediaModal(null)}>
             <div className="insta-preview-media-container" onClick={(e) => e.stopPropagation()}>
               {activeMediaModal.type === 'video' ? (
