@@ -79,6 +79,9 @@ export default function ChatScreen({
   // Reply & quoting state matching mobile
   const [replyToMessage, setReplyToMessage] = useState(null)
   const [highlightedMessageId, setHighlightedMessageId] = useState(null)
+  const highlightTimeoutRef = useRef(null)
+  const sendingRef = useRef(false)
+  const [sending, setSending] = useState(false)
 
   // Message action state & unsend confirmation modal
   const [unsendTargetMessage, setUnsendTargetMessage] = useState(null)
@@ -183,8 +186,22 @@ export default function ChatScreen({
     knownMessageIdsRef.current = currentIds
   }, [messages, chatLoading, selectedUser?.id])
 
+  // Clear highlight timer on unmount
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+        highlightTimeoutRef.current = null
+      }
+    }
+  }, [])
+
   // Reset when conversation changes
   useEffect(() => {
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current)
+      highlightTimeoutRef.current = null
+    }
     knownMessageIdsRef.current = new Set()
     initializedMessagesRef.current = false
     previousMessageCountRef.current = 0
@@ -197,6 +214,8 @@ export default function ChatScreen({
     setFilePreview(null)
     setReplyToMessage(null)
     setHighlightedMessageId(null)
+    sendingRef.current = false
+    setSending(false)
     setShowAttachmentMenu(false)
   }, [selectedUser?.id])
 
@@ -279,16 +298,22 @@ export default function ChatScreen({
   // Smooth scroll to quoted target message and highlight it
   function handleQuotedMessageClick(quotedId) {
     if (!quotedId) return
-    const targetEl = messageRefs.current[quotedId]
+    const idStr = String(quotedId).trim()
+    if (!idStr) return
+
+    const targetEl = messageRefs.current[idStr]
     if (targetEl) {
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      setHighlightedMessageId(quotedId)
-      window.setTimeout(() => {
-        setHighlightedMessageId((curr) => (curr === quotedId ? null : curr))
-      }, 1600)
-    } else {
-      // Message not found in DOM
-      alert('Original message is not in recent history or has been unsent.')
+
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+      }
+
+      setHighlightedMessageId(idStr)
+      highlightTimeoutRef.current = window.setTimeout(() => {
+        setHighlightedMessageId(null)
+        highlightTimeoutRef.current = null
+      }, 1500)
     }
   }
 
@@ -388,10 +413,11 @@ export default function ChatScreen({
   async function handleFormSubmit(e) {
     e.preventDefault()
 
+    if (sendingRef.current || uploading) return
+
     const currentReply = replyToMessage
 
     if (selectedFile) {
-      if (uploading) return
       setUploading(true)
       try {
         await sendMedia({ file: selectedFile, caption: text, replyTo: currentReply })
@@ -404,9 +430,20 @@ export default function ChatScreen({
         setUploading(false)
       }
     } else {
-      if (!text.trim()) return
-      sendMessage(e, currentReply)
-      setReplyToMessage(null)
+      const trimmed = text.trim()
+      if (!trimmed) return
+
+      sendingRef.current = true
+      setSending(true)
+      try {
+        sendMessage(e, currentReply)
+        setReplyToMessage(null)
+      } finally {
+        window.setTimeout(() => {
+          sendingRef.current = false
+          setSending(false)
+        }, 300)
+      }
     }
   }
 
@@ -513,14 +550,23 @@ export default function ChatScreen({
               const isNewDate = !previousDate || itemDate.toDateString() !== previousDate.toDateString()
               const mediaSrc = getMediaSrc(item.mediaUrl)
               const isMine = item.senderId === user.id
-              const isHighlighted = highlightedMessageId === item.id
+              const isHighlighted = Boolean(
+                highlightedMessageId &&
+                ((item.id && String(item.id) === highlightedMessageId) ||
+                 (item.clientTempId && String(item.clientTempId) === highlightedMessageId))
+              )
 
               return (
                 <div
-                  key={item.id}
+                  key={item.id || item.clientTempId || index}
                   ref={(el) => {
-                    if (el) messageRefs.current[item.id] = el
-                    else delete messageRefs.current[item.id]
+                    if (el) {
+                      if (item.id) messageRefs.current[String(item.id)] = el
+                      if (item.clientTempId) messageRefs.current[String(item.clientTempId)] = el
+                    } else {
+                      if (item.id) delete messageRefs.current[String(item.id)]
+                      if (item.clientTempId) delete messageRefs.current[String(item.clientTempId)]
+                    }
                   }}
                 >
                   {isNewDate && (
@@ -790,19 +836,26 @@ export default function ChatScreen({
           ref={textInputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              handleFormSubmit(e)
+            }
+          }}
           placeholder={selectedFile ? 'Add a caption…' : replyToMessage ? 'Write a reply…' : 'Write a message…'}
-          disabled={!socketConnected || uploading}
+          disabled={!socketConnected || uploading || sending}
           autoComplete="off"
         />
 
         <button
           type="submit"
           aria-label="Send message"
-          disabled={!socketConnected || (!text.trim() && !selectedFile) || uploading}
-          onMouseDown={(event) => event.preventDefault()}
+          disabled={!socketConnected || (!text.trim() && !selectedFile) || uploading || sending}
         >
           {uploading ? (
             <span>Uploading…</span>
+          ) : sending ? (
+            <span>Sending…</span>
           ) : (
             <>
               <Icon name="send" size={19} />

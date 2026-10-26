@@ -496,18 +496,18 @@
   font-weight: 600;
 }
 
-/* Quoted jump highlight effect */
+/* Quoted jump highlight effect - ONLY activates briefly when triggered by a quote tag */
 .message-highlight {
-  animation: glowHighlight 1.6s ease-out;
+  animation: glowHighlight 1.5s ease-out forwards;
 }
 @keyframes glowHighlight {
   0% {
-    box-shadow: 0 0 0 3px #8b5cf6, 0 0 20px rgba(139, 92, 246, 0.5);
+    box-shadow: 0 0 0 3px #8b5cf6, 0 0 18px rgba(139, 92, 246, 0.55);
     transform: scale(1.02);
   }
   70% {
-    box-shadow: 0 0 0 2px #8b5cf6, 0 0 12px rgba(139, 92, 246, 0.25);
-    transform: scale(1);
+    box-shadow: 0 0 0 2px #8b5cf6, 0 0 10px rgba(139, 92, 246, 0.25);
+    transform: scale(1.005);
   }
   100% {
     box-shadow: 0 3px 12px rgba(25, 32, 55, 0.025);

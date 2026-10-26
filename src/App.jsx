@@ -39,6 +39,7 @@ function App() {
   const selectedUserRef = useRef(null)
   const usersRef = useRef([])
   const conversationRequestRef = useRef(0)
+  const sendingRef = useRef(false)
 
   useEffect(() => {
     usersRef.current = users
@@ -193,7 +194,21 @@ function App() {
         }
 
         setMessages((current) => {
-          if (current.some((item) => item.id === incoming.id)) return current
+          const isDuplicate = current.some((item) => {
+            if (item.id && incoming.id && item.id === incoming.id) return true
+            if (incoming.clientTempId && (item.clientTempId === incoming.clientTempId || item.id === incoming.clientTempId)) return true
+            if (item.clientTempId && incoming.id && item.clientTempId === incoming.id) return true
+            return false
+          })
+          if (isDuplicate) {
+            return current.map((item) => {
+              const matches =
+                (item.id && incoming.id && item.id === incoming.id) ||
+                (incoming.clientTempId && (item.clientTempId === incoming.clientTempId || item.id === incoming.clientTempId)) ||
+                (item.clientTempId && incoming.id && item.clientTempId === incoming.id)
+              return matches ? { ...item, ...incoming } : item
+            })
+          }
           const next = [...current, incoming]
           setConversationCache((cache) => ({ ...cache, [otherUserId]: next }))
           return next
@@ -405,14 +420,33 @@ function App() {
 
         setMessages((current) => {
           const incoming = data.messages || []
-          const byId = new Map(current.map((item) => [item.id, item]))
+          const byId = new Map()
+          const seenClientTempIds = new Set()
+
+          for (const item of current) {
+            if (item.id) byId.set(item.id, item)
+            if (item.clientTempId) seenClientTempIds.add(item.clientTempId)
+          }
 
           let hasNewOrChanged = false
           for (const item of incoming) {
+            if (item.clientTempId && seenClientTempIds.has(item.clientTempId) && !byId.has(item.id)) {
+              for (const [id, val] of byId.entries()) {
+                if (val.clientTempId === item.clientTempId) {
+                  byId.delete(id)
+                  byId.set(item.id, { ...val, ...item })
+                  hasNewOrChanged = true
+                  break
+                }
+              }
+              continue
+            }
+
             const existing = byId.get(item.id)
-            if (!existing || existing.createdAt !== item.createdAt || existing.mediaUrl !== item.mediaUrl) {
+            if (!existing || existing.createdAt !== item.createdAt || existing.mediaUrl !== item.mediaUrl || existing.readAt !== item.readAt || existing.deliveredAt !== item.deliveredAt) {
               hasNewOrChanged = true
-              byId.set(item.id, item)
+              byId.set(item.id, { ...(existing || {}), ...item })
+              if (item.clientTempId) seenClientTempIds.add(item.clientTempId)
             }
           }
 
@@ -623,10 +657,19 @@ function App() {
     const trimmed = text.trim()
 
     if (!trimmed || !selectedUser || !socketRef.current?.connected) return
+    if (sendingRef.current) return
+    sendingRef.current = true
+
+    // Synchronously clear text immediately so rapid clicks/Enters don't re-send
+    setText('')
+
+    const clientTempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
 
     const payload = {
       receiverId: selectedUser.id,
       text: trimmed,
+      clientTempId,
+      createdAt: new Date().toISOString(),
     }
 
     if (replyTo && replyTo.id) {
@@ -644,10 +687,12 @@ function App() {
       'private:message',
       payload,
       (result) => {
+        sendingRef.current = false
         if (!result?.ok) {
           setNotice(result?.error || 'Could not send message')
+          // Restore text if send failed
+          setText(trimmed)
         } else {
-          setText('')
           setNotice('')
         }
       }
@@ -673,9 +718,13 @@ function App() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to upload media')
 
+      const clientTempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
+
       const payload = {
         receiverId: selectedUser.id,
         text: (caption || '').trim(),
+        clientTempId,
+        createdAt: new Date().toISOString(),
         mediaUrl: data.mediaUrl,
         mediaType: data.mediaType,
         mediaName: data.mediaName,
